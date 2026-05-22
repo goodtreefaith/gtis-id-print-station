@@ -27,6 +27,7 @@ body {
 
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -396,14 +397,20 @@ select {
 }
 
 .emergency-layer span {
-  margin-top: 4px;
+  margin-top: 5px;
   font-weight: 800;
-  font-size: 12px;
+  line-height: 1.08;
+  max-width: 90%;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .emergency-layer b {
-  margin-top: 6px;
-  font-size: 18px;
+  margin-top: 7px;
+  font-size: 17px;
 }
 
 .control-panel {
@@ -466,13 +473,24 @@ select {
 }
 
 .field input,
+.field textarea,
 .field select {
   width: 100%;
-  height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0 10px;
   background: #fff;
+}
+
+.field input,
+.field select {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.field textarea {
+  min-height: 68px;
+  padding: 9px 10px;
+  resize: vertical;
 }
 
 .toggle-row {

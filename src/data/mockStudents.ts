@@ -34,6 +34,7 @@ export const mockStudents: StudentRecord[] = [
     guardian: {
       name: 'Maria Bamba',
       relation: 'Mother',
+      address: '1 Bagtas, Tanza, Cavite',
       phone: '0917-111-2026'
     },
     lrn: '123456789101',
@@ -49,6 +50,7 @@ export const mockStudents: StudentRecord[] = [
     guardian: {
       name: 'Ramon Santos',
       relation: 'Father',
+      address: '',
       phone: ''
     },
     lrn: '987654321012'
@@ -65,6 +67,7 @@ export const mockStudents: StudentRecord[] = [
     guardian: {
       name: 'Maria Isabella Dela Cruz Villanueva-Santos',
       relation: 'Legal Guardian',
+      address: 'Block 4 Lot 12, Grand Riverside Subdivision, Tanza, Cavite',
       phone: '0998-555-0144'
     }
   }

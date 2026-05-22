@@ -147,6 +147,7 @@ export async function updateGuardian(
         body: JSON.stringify({
           guardian_name: guardian.name,
           guardian_relation: guardian.relation,
+          guardian_address: guardian.address,
           guardian_phone: guardian.phone
         })
       },
@@ -202,6 +203,7 @@ async function searchMockStudents(query: string, page: number, limit: number): P
         student.grade,
         student.section,
         student.guardian.name,
+        student.guardian.address,
         student.guardian.phone
       ]
         .filter(Boolean)
@@ -288,6 +290,7 @@ interface PortalStudent {
   photo_url?: string;
   guardian_name?: string;
   guardian_relation?: string;
+  guardian_address?: string;
   guardian_phone?: string;
   lrn?: string;
   esc?: string;
@@ -306,6 +309,7 @@ function mapPortalStudent(student: PortalStudent): StudentRecord {
     guardian: {
       name: student.guardian_name || '',
       relation: student.guardian_relation || '',
+      address: student.guardian_address || '',
       phone: student.guardian_phone || ''
     },
     lrn: student.lrn || '',

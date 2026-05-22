@@ -1,6 +1,7 @@
 export interface GuardianContact {
   name: string;
   relation: string;
+  address: string;
   phone: string;
 }
 

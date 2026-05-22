@@ -103,6 +103,13 @@ function previewEmergencyNameStyle(name: string): CSSProperties {
   return { fontSize: `${fontSize}px` };
 }
 
+function previewEmergencyAddressStyle(address: string): CSSProperties {
+  const length = address.length;
+  const fontSize = length > 82 ? 9 : length > 62 ? 10 : length > 42 ? 11 : 12;
+
+  return { fontSize: `${fontSize}px` };
+}
+
 function replaceStudent(list: StudentRecord[], updated: StudentRecord) {
   return list.map((student) => (student.id === updated.id ? updated : student));
 }
@@ -534,7 +541,7 @@ export default function App() {
                     items={[
                       ['Current enrollment', readiness.enrolled],
                       ['Photo approved', readiness.photo],
-                      ['Guardian phone', readiness.guardian],
+                      ['Emergency contact', readiness.guardian],
                       ['Admission QR', readiness.qr],
                       ['ISO CR80 output', readiness.cr80]
                     ]}
@@ -563,9 +570,10 @@ export default function App() {
                     onChange={(value) => setGuardianDraft({ ...guardianDraft, name: value })}
                   />
                   <Field
-                    label="Relation"
-                    value={guardianDraft.relation}
-                    onChange={(value) => setGuardianDraft({ ...guardianDraft, relation: value })}
+                    label="Address"
+                    multiline
+                    value={guardianDraft.address}
+                    onChange={(value) => setGuardianDraft({ ...guardianDraft, address: value })}
                   />
                   <Field
                     label="Phone"
@@ -635,17 +643,23 @@ function Field({
   label,
   value,
   onChange,
-  type = 'text'
+  type = 'text',
+  multiline = false
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  multiline?: boolean;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      {multiline ? (
+        <textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} />
+      ) : (
+        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      )}
     </label>
   );
 }
@@ -688,7 +702,7 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
         <CardPage background={BACK_TEMPLATE}>
           <div className="layer emergency-layer" style={cardLayers.emergency}>
             <strong style={previewEmergencyNameStyle(student.guardian.name)}>{student.guardian.name}</strong>
-            <span>{student.guardian.relation}</span>
+            <span style={previewEmergencyAddressStyle(student.guardian.address)}>{student.guardian.address}</span>
             <b>{student.guardian.phone}</b>
           </div>
         </CardPage>

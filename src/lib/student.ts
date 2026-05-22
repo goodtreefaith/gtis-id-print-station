@@ -16,7 +16,7 @@ export function readinessFor(student: StudentRecord, qrReady: boolean) {
   return {
     enrolled: true,
     photo: Boolean(student.photoUrl),
-    guardian: Boolean(student.guardian.phone.trim()),
+    guardian: Boolean(student.guardian.name.trim() && student.guardian.address.trim() && student.guardian.phone.trim()),
     qr: qrReady,
     cr80: true
   };

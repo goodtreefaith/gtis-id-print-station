@@ -96,6 +96,20 @@ function emergencyNameFontMm(name: string) {
   return '3mm';
 }
 
+function emergencyAddressFontMm(address: string) {
+  const length = address.length;
+  if (length > 82) {
+    return '1.5mm';
+  }
+  if (length > 62) {
+    return '1.7mm';
+  }
+  if (length > 42) {
+    return '1.85mm';
+  }
+  return '2.05mm';
+}
+
 export function renderPrintHtml(
   student: StudentRecord,
   qrDataUrl: string,
@@ -131,8 +145,8 @@ export function renderPrintHtml(
     .ids { color: #fff; font-weight: 900; font-size: 2.05mm; line-height: 1.12; }
     .emergency { color: #063f23; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
     .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1.05; font-weight: 900; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .emergency-relation { font-size: 2.05mm; margin-top: 1mm; font-weight: 700; }
-    .emergency-phone { font-size: 3.2mm; margin-top: 1.2mm; font-weight: 900; }
+    .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.08; margin-top: .9mm; font-weight: 700; max-width: 90%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+    .emergency-phone { font-size: 3mm; margin-top: 1.2mm; font-weight: 900; }
   </style>
 </head>
 <body>
@@ -149,7 +163,7 @@ export function renderPrintHtml(
     <img class="bg" src="${assets.back}" />
     <div class="layer emergency" style="${pos(cardLayers.emergency)}">
       <div class="emergency-name">${escapeHtml(student.guardian.name)}</div>
-      <div class="emergency-relation">${escapeHtml(student.guardian.relation)}</div>
+      <div class="emergency-address">${escapeHtml(student.guardian.address)}</div>
       <div class="emergency-phone">${escapeHtml(student.guardian.phone)}</div>
     </div>
   </section>
