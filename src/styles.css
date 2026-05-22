@@ -378,15 +378,28 @@ select {
 
 .emergency-layer {
   color: #063f23;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 3px;
   align-items: center;
-  justify-content: center;
+  align-content: center;
   text-align: center;
+  padding: 0 10px;
 }
 
 .emergency-layer strong {
   font-weight: 900;
+  line-height: 1;
+  max-width: 100%;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.emergency-layer span {
+  font-weight: 800;
   line-height: 1.05;
   max-width: 100%;
   display: -webkit-box;
@@ -396,21 +409,9 @@ select {
   -webkit-line-clamp: 2;
 }
 
-.emergency-layer span {
-  margin-top: 5px;
-  font-weight: 800;
-  line-height: 1.08;
-  max-width: 90%;
-  display: -webkit-box;
-  overflow: hidden;
-  overflow-wrap: break-word;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
 .emergency-layer b {
-  margin-top: 7px;
-  font-size: 17px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .control-panel {

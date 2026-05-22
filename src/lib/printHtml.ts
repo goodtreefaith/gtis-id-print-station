@@ -85,29 +85,29 @@ function splitNameLines(name: string) {
 function emergencyNameFontMm(name: string) {
   const length = name.length;
   if (length > 42) {
-    return '2.1mm';
+    return '1.7mm';
   }
   if (length > 34) {
-    return '2.35mm';
+    return '1.85mm';
   }
   if (length > 26) {
-    return '2.65mm';
+    return '2.05mm';
   }
-  return '3mm';
+  return '2.25mm';
 }
 
 function emergencyAddressFontMm(address: string) {
   const length = address.length;
   if (length > 82) {
-    return '1.5mm';
+    return '1.2mm';
   }
   if (length > 62) {
-    return '1.7mm';
+    return '1.35mm';
   }
   if (length > 42) {
-    return '1.85mm';
+    return '1.55mm';
   }
-  return '2.05mm';
+  return '1.7mm';
 }
 
 export function renderPrintHtml(
@@ -143,10 +143,10 @@ export function renderPrintHtml(
     .name span { display: block; }
     .grade { color: #fff; font-weight: 900; font-size: ${gradeFontMm(gradeLine)}; white-space: nowrap; }
     .ids { color: #fff; font-weight: 900; font-size: 2.05mm; line-height: 1.12; }
-    .emergency { color: #063f23; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
-    .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1.05; font-weight: 900; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.08; margin-top: .9mm; font-weight: 700; max-width: 90%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-    .emergency-phone { font-size: 3mm; margin-top: 1.2mm; font-weight: 900; }
+    .emergency { color: #063f23; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .5mm; align-items: center; align-content: center; text-align: center; padding: 0 1.7mm; }
+    .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; font-weight: 900; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
+    .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.05; font-weight: 700; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .emergency-phone { font-size: 2.6mm; line-height: 1; font-weight: 900; }
   </style>
 </head>
 <body>

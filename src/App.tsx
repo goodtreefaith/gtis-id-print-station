@@ -98,14 +98,14 @@ function splitNameLines(name: string) {
 
 function previewEmergencyNameStyle(name: string): CSSProperties {
   const length = name.length;
-  const fontSize = length > 42 ? 12 : length > 34 ? 13 : length > 26 ? 15 : 17;
+  const fontSize = length > 42 ? 10 : length > 34 ? 11 : length > 26 ? 12 : 13;
 
   return { fontSize: `${fontSize}px` };
 }
 
 function previewEmergencyAddressStyle(address: string): CSSProperties {
   const length = address.length;
-  const fontSize = length > 82 ? 9 : length > 62 ? 10 : length > 42 ? 11 : 12;
+  const fontSize = length > 82 ? 7 : length > 62 ? 8 : length > 42 ? 9 : 10;
 
   return { fontSize: `${fontSize}px` };
 }
@@ -526,7 +526,10 @@ export default function App() {
         <div className="content-grid">
           <section className="preview-panel">
             {selected && qrDataUrl ? (
-              <CardPreview student={selected} qrDataUrl={qrDataUrl} />
+              <CardPreview
+                student={guardianDraft ? { ...selected, guardian: guardianDraft } : selected}
+                qrDataUrl={qrDataUrl}
+              />
             ) : (
               <div className="empty-state">Select a student to preview the ID card.</div>
             )}
