@@ -10,16 +10,24 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { GuardianContact, PrinterInfo, StudentRecord } from './types';
+import type { GuardianContact, PortalSettings, PrinterInfo, StudentRecord } from './types';
 import { assetToDataUrl } from './lib/assets';
 import { cardLayers } from './lib/layout';
 import { renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
 import { readinessFor, studentFullName, studentGradeLine } from './lib/student';
-import { searchStudents, updateGuardian, updatePhoto } from './lib/portalClient';
+import {
+  hasPortalConfig,
+  loadPortalSettings,
+  savePortalSettings,
+  searchStudents,
+  updateGuardian,
+  updatePhoto
+} from './lib/portalClient';
 
 const FRONT_TEMPLATE = '/templates/2026-2027/front.canva-empty.svg';
 const BACK_TEMPLATE = '/templates/2026-2027/back.canva.svg';
+const STUDENT_PAGE_LIMIT = 20;
 
 function previewNameStyle(name: string): CSSProperties {
   const length = name.length;
@@ -31,14 +39,30 @@ function previewNameStyle(name: string): CSSProperties {
   };
 }
 
+function previewEmergencyNameStyle(name: string): CSSProperties {
+  const length = name.length;
+  const fontSize = length > 42 ? 12 : length > 34 ? 13 : length > 26 ? 15 : 17;
+
+  return { fontSize: `${fontSize}px` };
+}
+
 function replaceStudent(list: StudentRecord[], updated: StudentRecord) {
   return list.map((student) => (student.id === updated.id ? updated : student));
+}
+
+function mergeStudents(current: StudentRecord[], incoming: StudentRecord[]) {
+  const seen = new Set(current.map((student) => student.id));
+  return [...current, ...incoming.filter((student) => !seen.has(student.id))];
 }
 
 export default function App() {
   const [query, setQuery] = useState('');
   const [students, setStudents] = useState<StudentRecord[]>([]);
   const [selected, setSelected] = useState<StudentRecord | null>(null);
+  const [studentPage, setStudentPage] = useState(1);
+  const [hasMoreStudents, setHasMoreStudents] = useState(false);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [refreshCount, setRefreshCount] = useState(0);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [guardianDraft, setGuardianDraft] = useState<GuardianContact | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -46,22 +70,62 @@ export default function App() {
   const [selectedPrinter, setSelectedPrinter] = useState('');
   const [silentPrint, setSilentPrint] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState('Mock portal mode is active.');
+  const [portalSettings, setPortalSettings] = useState<PortalSettings>(() => loadPortalSettings());
+  const [portalDraft, setPortalDraft] = useState<PortalSettings>(() => loadPortalSettings());
+  const [status, setStatus] = useState(() =>
+    hasPortalConfig(loadPortalSettings())
+      ? 'Live portal mode is ready.'
+      : 'Mock portal mode is active. Add portal connection details to fetch live data.'
+  );
 
   useEffect(() => {
-    let active = true;
-    searchStudents(query).then((result) => {
-      if (active) {
-        setStudents(result);
-        if (!selected && result.length) {
-          setSelected(result[0]);
-        }
-      }
-    });
+    let canceled = false;
+    const timeout = window.setTimeout(() => {
+      loadStudents(1, true, () => canceled);
+    }, 250);
+
     return () => {
-      active = false;
+      canceled = true;
+      window.clearTimeout(timeout);
     };
-  }, [query, selected]);
+  }, [query, portalSettings, refreshCount]);
+
+  async function loadStudents(page: number, replace: boolean, isCanceled = () => false) {
+    setLoadingStudents(true);
+    try {
+      const result = await searchStudents(query, {
+        page,
+        limit: STUDENT_PAGE_LIMIT,
+        settings: portalSettings
+      });
+
+      if (isCanceled()) {
+        return;
+      }
+
+      setStudentPage(result.page);
+      setHasMoreStudents(result.hasMore);
+      setStudents((current) => {
+        const next = replace ? result.students : mergeStudents(current, result.students);
+        setSelected((selectedStudent) => {
+          if (selectedStudent && next.some((student) => student.id === selectedStudent.id)) {
+            return selectedStudent;
+          }
+          return next[0] || null;
+        });
+        return next;
+      });
+      setStatus(result.message || (result.source === 'portal' ? 'Live portal data loaded.' : 'Mock portal mode is active.'));
+    } catch (error) {
+      if (!isCanceled()) {
+        setStatus(error instanceof Error ? error.message : 'Could not load students from the portal.');
+      }
+    } finally {
+      if (!isCanceled()) {
+        setLoadingStudents(false);
+      }
+    }
+  }
 
   useEffect(() => {
     if (!selected) {
@@ -128,10 +192,10 @@ export default function App() {
 
     setBusy(true);
     try {
-      const updated = await updateGuardian(selected.id, guardianDraft);
+      const updated = await updateGuardian(selected.id, guardianDraft, portalSettings);
       setStudents((current) => replaceStudent(current, updated));
       setSelected(updated);
-      setStatus('Guardian contact saved to the portal record.');
+      setStatus(hasPortalConfig(portalSettings) ? 'Guardian contact saved to the portal.' : 'Guardian contact saved in mock mode.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not save guardian contact.');
     } finally {
@@ -146,11 +210,11 @@ export default function App() {
 
     setBusy(true);
     try {
-      const updated = await updatePhoto(selected.id, photoDataUrl);
+      const updated = await updatePhoto(selected.id, photoDataUrl, portalSettings);
       setStudents((current) => replaceStudent(current, updated));
       setSelected(updated);
       setCaptureOpen(false);
-      setStatus('Approved photo uploaded to the student profile.');
+      setStatus(hasPortalConfig(portalSettings) ? 'Approved photo uploaded to the portal.' : 'Approved photo saved in mock mode.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not update student photo.');
     } finally {
@@ -208,6 +272,35 @@ export default function App() {
     }
   }
 
+  function handleSavePortalSettings() {
+    const cleanSettings = {
+      ...portalDraft,
+      baseUrl: portalDraft.baseUrl.trim(),
+      token: portalDraft.token.trim()
+    };
+    savePortalSettings(cleanSettings);
+    setPortalSettings(cleanSettings);
+    setStudentPage(1);
+    setRefreshCount((value) => value + 1);
+    setStatus(
+      hasPortalConfig(cleanSettings)
+        ? 'Portal connection saved. Refreshing live students...'
+        : 'Mock portal mode is active. Add the portal URL and API token to fetch live data.'
+    );
+  }
+
+  function handleRefreshStudents() {
+    setStudentPage(1);
+    setRefreshCount((value) => value + 1);
+    setStatus(hasPortalConfig(portalSettings) ? 'Refreshing live students...' : 'Refreshing mock students...');
+  }
+
+  function handleLoadMoreStudents() {
+    if (!loadingStudents && hasMoreStudents) {
+      loadStudents(studentPage + 1, false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="search-rail">
@@ -227,6 +320,14 @@ export default function App() {
             placeholder="Search name or admission no."
           />
         </label>
+        <div className="search-meta">
+          <span className={hasPortalConfig(portalSettings) ? 'mode-pill live' : 'mode-pill'}>
+            {hasPortalConfig(portalSettings) ? 'Live portal' : 'Mock data'}
+          </span>
+          <button className="icon-text-button" onClick={handleRefreshStudents} disabled={loadingStudents}>
+            <RefreshCw size={15} /> Refresh
+          </button>
+        </div>
 
         <div className="student-list">
           {students.map((student) => (
@@ -248,6 +349,13 @@ export default function App() {
               </span>
             </button>
           ))}
+          {loadingStudents ? <div className="student-list-note">Loading students...</div> : null}
+          {!loadingStudents && students.length === 0 ? <div className="student-list-note">No students found.</div> : null}
+          {!loadingStudents && hasMoreStudents ? (
+            <button className="button secondary wide" onClick={handleLoadMoreStudents}>
+              Load More
+            </button>
+          ) : null}
         </div>
       </aside>
 
@@ -277,6 +385,14 @@ export default function App() {
           </section>
 
           <aside className="control-panel">
+            <PortalConnectionPanel
+              draft={portalDraft}
+              onChange={setPortalDraft}
+              onSave={handleSavePortalSettings}
+              onRefresh={handleRefreshStudents}
+              loading={loadingStudents}
+            />
+
             {selected && readiness && guardianDraft ? (
               <>
                 <section className="panel-section">
@@ -385,17 +501,66 @@ function CheckList({ items }: { items: Array<[string, boolean]> }) {
 function Field({
   label,
   value,
-  onChange
+  onChange,
+  type = 'text'
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  type?: string;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} />
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
+  );
+}
+
+function PortalConnectionPanel({
+  draft,
+  onChange,
+  onSave,
+  onRefresh,
+  loading
+}: {
+  draft: PortalSettings;
+  onChange: (settings: PortalSettings) => void;
+  onSave: () => void;
+  onRefresh: () => void;
+  loading: boolean;
+}) {
+  return (
+    <section className="panel-section portal-section">
+      <div className="panel-heading-row">
+        <h2>Portal Connection</h2>
+        <button className="icon-text-button" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={15} /> Refresh
+        </button>
+      </div>
+      <Field
+        label="Portal URL"
+        value={draft.baseUrl}
+        onChange={(baseUrl) => onChange({ ...draft, baseUrl })}
+      />
+      <Field
+        label="API Token"
+        type="password"
+        value={draft.token}
+        onChange={(token) => onChange({ ...draft, token })}
+      />
+      <label className="toggle-row">
+        <input
+          type="checkbox"
+          checked={draft.useMock}
+          onChange={(event) => onChange({ ...draft, useMock: event.target.checked })}
+        />
+        <span>Use mock data</span>
+      </label>
+      <button className="button secondary wide" onClick={onSave}>
+        <Save size={17} /> Save Connection
+      </button>
+    </section>
   );
 }
 
@@ -410,10 +575,6 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
         <CardPage background={FRONT_TEMPLATE}>
           {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
           <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
-          <div className="layer admission-layer" style={cardLayers.admission}>
-            <span className="admission-label">Student No</span>
-            <span className="admission-value">{student.admissionNo}</span>
-          </div>
           <div className={`layer name-layer${longName ? ' is-long' : ''}`} style={previewNameStyle(name)}>
             {name}
           </div>
@@ -427,10 +588,6 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
               ))}
             </div>
           ) : null}
-          <div className="layer year-layer" style={cardLayers.schoolYear}>
-            <span className="year-label">School Year</span>
-            <span className="year-value">2026-2027</span>
-          </div>
         </CardPage>
         <span>Front</span>
       </div>
@@ -438,7 +595,7 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
       <div className="card-shell">
         <CardPage background={BACK_TEMPLATE}>
           <div className="layer emergency-layer" style={cardLayers.emergency}>
-            <strong>{student.guardian.name}</strong>
+            <strong style={previewEmergencyNameStyle(student.guardian.name)}>{student.guardian.name}</strong>
             <span>{student.guardian.relation}</span>
             <b>{student.guardian.phone}</b>
           </div>

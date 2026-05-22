@@ -71,7 +71,8 @@ select {
 .brand-lockup span,
 .topbar p,
 .student-row small,
-.status-line {
+.status-line,
+.student-list-note {
   color: var(--muted);
 }
 
@@ -91,6 +92,47 @@ select {
   outline: 0;
   min-width: 0;
   width: 100%;
+}
+
+.search-meta,
+.panel-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mode-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mode-pill.live {
+  border-color: var(--green-100);
+  background: var(--green-50);
+  color: var(--green-700);
+}
+
+.icon-text-button {
+  border: 0;
+  background: transparent;
+  color: var(--green-800);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.icon-text-button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
 }
 
 .student-list {
@@ -125,6 +167,12 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.student-list-note {
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .student-thumb,
@@ -279,28 +327,12 @@ select {
   padding: 4px;
 }
 
-.admission-layer,
 .name-layer,
 .grade-layer,
-.ids-layer,
-.year-layer {
+.ids-layer {
   color: #fff;
   font-weight: 900;
   line-height: 1;
-}
-
-.admission-layer {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.admission-label {
-  font-size: 17px;
-}
-
-.admission-value {
-  font-size: 20px;
 }
 
 .name-layer {
@@ -327,21 +359,6 @@ select {
   line-height: 1.12;
 }
 
-.year-layer {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.year-label {
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.year-value {
-  font-size: 20px;
-}
-
 .emergency-layer {
   color: #063f23;
   display: flex;
@@ -352,18 +369,25 @@ select {
 }
 
 .emergency-layer strong {
-  font-size: 24px;
-  line-height: 1;
+  font-weight: 900;
+  line-height: 1.05;
+  max-width: 100%;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .emergency-layer span {
-  margin-top: 6px;
+  margin-top: 4px;
   font-weight: 800;
+  font-size: 12px;
 }
 
 .emergency-layer b {
-  margin-top: 8px;
-  font-size: 25px;
+  margin-top: 6px;
+  font-size: 18px;
 }
 
 .control-panel {
@@ -377,6 +401,11 @@ select {
 .panel-section {
   display: grid;
   gap: 12px;
+}
+
+.portal-section {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 18px;
 }
 
 .panel-section h2 {

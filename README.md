@@ -6,16 +6,17 @@ It is intentionally outside the CodeIgniter portal repo. The app can be tested o
 
 ## Current Scope
 
-- Search students from a mock portal adapter.
+- Search students from mock data or the live GTIS portal API.
+- Lazy-load student results in pages, with a manual refresh button for newly updated portal records.
 - Generate QR codes from `students.admission_no`.
 - Preview ISO CR80 front/back cards.
 - Capture webcam photos with a head-position guide.
 - Crop, retake, preview, and approve photos.
-- Edit guardian emergency contact in the app.
+- Edit guardian emergency contact in the app and save it back to the portal when live mode is configured.
 - Save CR80 PDF for Mac testing.
 - Print via Electron using the local OS printer driver.
 
-The real portal integration needs a small API in the GTIS portal for search, guardian update, approved photo upload, and print logging.
+Live mode needs the matching `idprintapi` routes deployed in the GTIS portal and a device API token configured on the portal server. Without a token, the app stays in mock mode for safe local testing.
 
 ## Development
 
@@ -43,7 +44,8 @@ The app uses the Canva SVG exports as the production card artwork:
 - `public/templates/2026-2027/front.canva-empty.svg`
 - `public/templates/2026-2027/back.canva.svg`
 
-The SVG front intentionally has no student data and no QR code. The app places the live webcam photo, QR code, student number, name, grade, LRN, and ESC on top at print time.
+The SVG front intentionally has no live photo/name/LRN/ESC data and no QR code. The app places the approved photo, QR code, name, grade, LRN, and ESC on top at print time.
+The school year and student-number label/value are treated as design artwork, so the app no longer overlays extra school-year or student-number text. The QR code is still generated from `students.admission_no`.
 
 Reference assets are kept only for comparison:
 
@@ -72,4 +74,10 @@ You can also build it from GitHub:
 
 ## Portal Adapter
 
-The app currently uses mock data. See [docs/portal-api-contract.md](docs/portal-api-contract.md) for the expected portal API shape.
+Use the Portal Connection panel inside the app:
+
+- Leave `Use mock data` checked for Mac layout/photo/print testing.
+- Enter `https://portal.gtis.edu.ph`, the configured API token, and uncheck `Use mock data` on the Windows NUC.
+- Use `Refresh` to pull newly enrolled students, recently changed guardian contacts, or approved photo updates.
+
+See [docs/portal-api-contract.md](docs/portal-api-contract.md) for the portal API shape.

@@ -63,8 +63,8 @@ export const mockStudents: StudentRecord[] = [
     section: 'Love',
     photoUrl: avatarSvg('Nathaniel Villanueva', '#c9d7c4'),
     guardian: {
-      name: 'Ana Villanueva',
-      relation: 'Guardian',
+      name: 'Maria Isabella Dela Cruz Villanueva-Santos',
+      relation: 'Legal Guardian',
       phone: '0998-555-0144'
     }
   }

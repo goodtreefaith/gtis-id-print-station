@@ -18,6 +18,20 @@ export interface StudentRecord {
   esc?: string;
 }
 
+export interface PortalSettings {
+  baseUrl: string;
+  token: string;
+  useMock: boolean;
+}
+
+export interface StudentSearchResult {
+  students: StudentRecord[];
+  page: number;
+  hasMore: boolean;
+  source: 'mock' | 'portal';
+  message?: string;
+}
+
 export interface PrinterInfo {
   name: string;
   displayName?: string;

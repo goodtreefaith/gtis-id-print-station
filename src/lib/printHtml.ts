@@ -35,6 +35,20 @@ function nameFontMm(name: string) {
   return '3.6mm';
 }
 
+function emergencyNameFontMm(name: string) {
+  const length = name.length;
+  if (length > 42) {
+    return '2.1mm';
+  }
+  if (length > 34) {
+    return '2.35mm';
+  }
+  if (length > 26) {
+    return '2.65mm';
+  }
+  return '3mm';
+}
+
 export function renderPrintHtml(
   student: StudentRecord,
   qrDataUrl: string,
@@ -62,20 +76,14 @@ export function renderPrintHtml(
     .layer { position: absolute; z-index: 2; }
     .photo { object-fit: cover; border-radius: 2.2mm; }
     .qr { background: #fff; padding: .8mm; }
-    .admission { color: #fff; font-weight: 900; line-height: 1; display: flex; flex-direction: column; justify-content: center; }
-    .admission-label { font-size: 2.9mm; }
-    .admission-value { font-size: 3.4mm; }
     .name { color: #fff; font-weight: 900; font-size: ${nameFontMm(name)}; line-height: .98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .name.is-long { display: -webkit-box; line-height: 1.05; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .grade { color: #fff; font-weight: 900; font-size: 2.9mm; white-space: nowrap; }
     .ids { color: #fff; font-weight: 900; font-size: 2.2mm; line-height: 1.12; }
-    .year { color: #fff; font-weight: 900; line-height: .98; display: flex; flex-direction: column; justify-content: center; }
-    .year-label { font-size: 2mm; }
-    .year-value { font-size: 3.4mm; }
     .emergency { color: #063f23; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
-    .emergency-name { font-size: 4mm; line-height: 1.05; font-weight: 900; }
-    .emergency-relation { font-size: 2.8mm; margin-top: 1.4mm; font-weight: 700; }
-    .emergency-phone { font-size: 4.4mm; margin-top: 1.6mm; font-weight: 900; }
+    .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1.05; font-weight: 900; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .emergency-relation { font-size: 2.05mm; margin-top: 1mm; font-weight: 700; }
+    .emergency-phone { font-size: 3.2mm; margin-top: 1.2mm; font-weight: 900; }
   </style>
 </head>
 <body>
@@ -83,11 +91,9 @@ export function renderPrintHtml(
     <img class="bg" src="${assets.front}" />
     ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
     <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
-    <div class="layer admission" style="${pos(cardLayers.admission)}"><span class="admission-label">Student No</span><span class="admission-value">${escapeHtml(student.admissionNo)}</span></div>
     <div class="layer ${nameClass}" style="${pos(cardLayers.name)}">${escapeHtml(name)}</div>
     <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(studentGradeLine(student))}</div>
     ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}
-    <div class="layer year" style="${pos(cardLayers.schoolYear)}"><span class="year-label">School Year</span><span class="year-value">2026-2027</span></div>
   </section>
   <section class="page">
     <img class="bg" src="${assets.back}" />
