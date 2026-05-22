@@ -1,4 +1,11 @@
 import type { StudentRecord } from '../types';
+import {
+  emergencyAddressFontPx,
+  emergencyNameFontPx,
+  emergencyPhoneFontPx,
+  previewPxToPrintMm
+} from './cardText';
+import { ID_CARD_FONT_STACK } from './fonts';
 import { cardLayers } from './layout';
 import { studentFullName, studentGradeLine } from './student';
 import type { CSSProperties } from 'react';
@@ -83,37 +90,21 @@ function splitNameLines(name: string) {
 }
 
 function emergencyNameFontMm(name: string) {
-  const length = name.length;
-  if (length > 42) {
-    return '1.7mm';
-  }
-  if (length > 34) {
-    return '1.85mm';
-  }
-  if (length > 26) {
-    return '2.05mm';
-  }
-  return '2.25mm';
+  return previewPxToPrintMm(emergencyNameFontPx(name));
 }
 
 function emergencyAddressFontMm(address: string) {
-  const length = address.length;
-  if (length > 82) {
-    return '1.2mm';
-  }
-  if (length > 62) {
-    return '1.35mm';
-  }
-  if (length > 42) {
-    return '1.55mm';
-  }
-  return '1.7mm';
+  return previewPxToPrintMm(emergencyAddressFontPx(address));
+}
+
+function emergencyPhoneFontMm(phone: string) {
+  return previewPxToPrintMm(emergencyPhoneFontPx(phone));
 }
 
 export function renderPrintHtml(
   student: StudentRecord,
   qrDataUrl: string,
-  assets: { front: string; back: string }
+  assets: { front: string; back: string; idCardFontFaceCss?: string }
 ) {
   const name = studentFullName(student);
   const nameLines = splitNameLines(name).map((line) => `<span>${escapeHtml(line)}</span>`).join('');
@@ -129,6 +120,7 @@ export function renderPrintHtml(
   <meta charset="utf-8" />
   <title>GTIS ID Card ${escapeHtml(student.admissionNo)}</title>
   <style>
+    ${assets.idCardFontFaceCss || ''}
     @page { size: 53.98mm 85.60mm; margin: 0; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvetica, sans-serif; }
@@ -138,15 +130,16 @@ export function renderPrintHtml(
     .layer { position: absolute; z-index: 2; }
     .photo { object-fit: cover; border-radius: 2.2mm; }
     .qr { background: #fff; padding: .8mm; }
-    .student-no { color: #fff; font-weight: 900; font-size: 3.6mm; line-height: .98; white-space: nowrap; }
-    .name { color: #fff; font-weight: 900; font-size: ${nameFontMm(name)}; line-height: .9; white-space: normal; overflow: visible; text-wrap: balance; }
+    .student-no, .name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 900; }
+    .student-no { color: #fff; font-size: 3.6mm; line-height: .98; white-space: nowrap; }
+    .name { color: #fff; font-size: ${nameFontMm(name)}; line-height: .9; white-space: normal; overflow: visible; text-wrap: balance; }
     .name span { display: block; }
-    .grade { color: #fff; font-weight: 900; font-size: ${gradeFontMm(gradeLine)}; white-space: nowrap; }
-    .ids { color: #fff; font-weight: 900; font-size: 2.05mm; line-height: 1.12; }
-    .emergency { color: #063f23; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .5mm; align-items: center; align-content: center; text-align: center; padding: 0 1.7mm; }
-    .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; font-weight: 900; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
-    .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.05; font-weight: 700; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .emergency-phone { font-size: 2.6mm; line-height: 1; font-weight: 900; }
+    .grade { color: #fff; font-size: ${gradeFontMm(gradeLine)}; white-space: nowrap; }
+    .ids { color: #fff; font-size: 2.05mm; line-height: 1.12; }
+    .emergency { color: #063f23; display: grid; grid-template-rows: auto auto auto; gap: 1mm; align-content: center; justify-items: center; text-align: center; padding: 0 1.7mm; }
+    .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
+    .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.02; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .emergency-phone { font-size: ${emergencyPhoneFontMm(student.guardian.phone)}; line-height: 1; }
   </style>
 </head>
 <body>

@@ -14,6 +14,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent } from 'react';
 import type { GuardianContact, OperatorSession, PortalSettings, PrinterInfo, StudentRecord } from './types';
 import { assetToDataUrl } from './lib/assets';
+import {
+  emergencyAddressFontPx,
+  emergencyNameFontPx,
+  emergencyPhoneFontPx
+} from './lib/cardText';
+import { loadOptionalIdCardFont, optionalIdCardFontFaceCss } from './lib/fonts';
 import { cardLayers } from './lib/layout';
 import { renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
@@ -97,17 +103,15 @@ function splitNameLines(name: string) {
 }
 
 function previewEmergencyNameStyle(name: string): CSSProperties {
-  const length = name.length;
-  const fontSize = length > 42 ? 10 : length > 34 ? 11 : length > 26 ? 12 : 13;
-
-  return { fontSize: `${fontSize}px` };
+  return { fontSize: `${emergencyNameFontPx(name)}px` };
 }
 
 function previewEmergencyAddressStyle(address: string): CSSProperties {
-  const length = address.length;
-  const fontSize = length > 82 ? 7 : length > 62 ? 8 : length > 42 ? 9 : 10;
+  return { fontSize: `${emergencyAddressFontPx(address)}px` };
+}
 
-  return { fontSize: `${fontSize}px` };
+function previewEmergencyPhoneStyle(phone: string): CSSProperties {
+  return { fontSize: `${emergencyPhoneFontPx(phone)}px` };
 }
 
 function replaceStudent(list: StudentRecord[], updated: StudentRecord) {
@@ -147,6 +151,10 @@ export default function App() {
   const operatorReady = !liveMode || hasValidOperatorSession(operatorSession);
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
   const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
+
+  useEffect(() => {
+    void loadOptionalIdCardFont();
+  }, []);
 
   useEffect(() => {
     if (!operatorReady) {
@@ -256,12 +264,13 @@ export default function App() {
       throw new Error('Select a student before printing.');
     }
 
-    const [front, back] = await Promise.all([
+    const [front, back, idCardFontFaceCss] = await Promise.all([
       assetToDataUrl(new URL(FRONT_TEMPLATE, window.location.href).toString()),
-      assetToDataUrl(new URL(BACK_TEMPLATE, window.location.href).toString())
+      assetToDataUrl(new URL(BACK_TEMPLATE, window.location.href).toString()),
+      optionalIdCardFontFaceCss()
     ]);
 
-    return renderPrintHtml(selected, qrDataUrl, { front, back });
+    return renderPrintHtml(selected, qrDataUrl, { front, back, idCardFontFaceCss });
   }
 
   async function handleSaveGuardian() {
@@ -706,7 +715,7 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
           <div className="layer emergency-layer" style={cardLayers.emergency}>
             <strong style={previewEmergencyNameStyle(student.guardian.name)}>{student.guardian.name}</strong>
             <span style={previewEmergencyAddressStyle(student.guardian.address)}>{student.guardian.address}</span>
-            <b>{student.guardian.phone}</b>
+            <b style={previewEmergencyPhoneStyle(student.guardian.phone)}>{student.guardian.phone}</b>
           </div>
         </CardPage>
         <span>Back</span>
