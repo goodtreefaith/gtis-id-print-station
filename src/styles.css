@@ -330,52 +330,72 @@ select {
 
 .photo-layer {
   object-fit: cover;
-  border-radius: 13px;
+  border: 2px solid #fff;
+  border-radius: 12px;
 }
 
 .qr-layer {
   background: #fff;
-  padding: 4px;
 }
 
-.name-layer,
+.last-name-layer,
+.first-name-layer,
 .grade-layer,
 .student-no-layer,
 .ids-layer {
-  color: #fff;
   font-family: var(--id-card-font);
   font-weight: 700;
 }
 
-.name-layer {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  white-space: normal;
-  overflow: visible;
-  overflow-wrap: normal;
-  text-wrap: balance;
+.last-name-layer,
+.first-name-layer,
+.student-no-layer,
+.ids-layer {
+  color: #00692e;
 }
 
-.name-layer span {
-  display: block;
+.last-name-layer,
+.first-name-layer,
+.grade-layer,
+.student-no-layer {
+  text-align: center;
+}
+
+.last-name-layer,
+.first-name-layer {
+  line-height: .95;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+
+.last-name-layer {
+  letter-spacing: 0;
+}
+
+.first-name-layer {
+  letter-spacing: 0;
 }
 
 .student-no-layer {
-  font-size: 22px;
-  line-height: .98;
+  font-size: 15px;
+  line-height: 1;
   white-space: nowrap;
 }
 
 .grade-layer {
+  color: #fff;
   font-size: 17px;
   line-height: 1;
   white-space: nowrap;
 }
 
 .ids-layer {
-  font-size: 12px;
-  line-height: 1.12;
+  font-size: 13px;
+  line-height: 1.04;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .emergency-layer {

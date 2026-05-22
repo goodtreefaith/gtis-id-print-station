@@ -7,7 +7,7 @@ import {
 } from './cardText';
 import { ID_CARD_FONT_STACK } from './fonts';
 import { cardLayers } from './layout';
-import { studentFullName, studentGradeLine } from './student';
+import { studentFirstNameLine, studentGradeLine, studentLastNameLine } from './student';
 import type { CSSProperties } from 'react';
 
 function pos(style: CSSProperties) {
@@ -25,68 +25,46 @@ function escapeHtml(value: string | undefined) {
     .replaceAll("'", '&#039;');
 }
 
-function nameFontMm(name: string) {
-  const lines = splitNameLines(name);
-  const longestLine = Math.max(...lines.map((line) => line.length));
+function lastNameFontMm(lastName: string) {
+  const length = lastName.length;
+  if (length > 22) {
+    return '3.4mm';
+  }
+  if (length > 18) {
+    return '3.9mm';
+  }
+  if (length > 14) {
+    return '4.45mm';
+  }
+  return '5.25mm';
+}
 
-  if (lines.length > 1) {
-    if (longestLine > 28) {
-      return '2.15mm';
-    }
-    if (longestLine > 24) {
-      return '2.35mm';
-    }
-    if (longestLine > 20) {
-      return '2.55mm';
-    }
-    return '2.75mm';
+function firstNameFontMm(firstName: string) {
+  const length = firstName.length;
+  if (length > 36) {
+    return '2.55mm';
   }
-
-  if (longestLine > 30) {
-    return '2.2mm';
+  if (length > 30) {
+    return '2.9mm';
   }
-  if (longestLine > 26) {
-    return '2.7mm';
+  if (length > 24) {
+    return '3.25mm';
   }
-  if (longestLine > 22) {
-    return '3mm';
-  }
-  return '3.55mm';
+  return '3.75mm';
 }
 
 function gradeFontMm(grade: string) {
   const length = grade.length;
+  if (length > 36) {
+    return '2.35mm';
+  }
   if (length > 28) {
-    return '2.05mm';
+    return '2.65mm';
   }
   if (length > 23) {
-    return '2.25mm';
+    return '3mm';
   }
-  if (length > 18) {
-    return '2.55mm';
-  }
-  return '2.9mm';
-}
-
-function splitNameLines(name: string) {
-  const words = name.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
-  if (name.length <= 26 || words.length <= 1) {
-    return [name];
-  }
-
-  let bestIndex = 1;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (let index = 1; index < words.length; index += 1) {
-    const first = words.slice(0, index).join(' ');
-    const second = words.slice(index).join(' ');
-    const score = Math.abs(first.length - second.length);
-    if (score < bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-
-  return [words.slice(0, bestIndex).join(' '), words.slice(bestIndex).join(' ')];
+  return '3.4mm';
 }
 
 function emergencyNameFontMm(name: string) {
@@ -106,8 +84,8 @@ export function renderPrintHtml(
   qrDataUrl: string,
   assets: { front: string; back: string; idCardFontFaceCss?: string }
 ) {
-  const name = studentFullName(student);
-  const nameLines = splitNameLines(name).map((line) => `<span>${escapeHtml(line)}</span>`).join('');
+  const lastName = studentLastNameLine(student);
+  const firstName = studentFirstNameLine(student);
   const gradeLine = studentGradeLine(student);
   const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : '']
     .filter(Boolean)
@@ -128,14 +106,16 @@ export function renderPrintHtml(
     .page:last-child { page-break-after: auto; }
     .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .layer { position: absolute; z-index: 2; }
-    .photo { object-fit: cover; border-radius: 2.2mm; }
-    .qr { background: #fff; padding: .8mm; }
-    .student-no, .name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 700; }
-    .student-no { color: #fff; font-size: 3.6mm; line-height: .98; white-space: nowrap; }
-    .name { color: #fff; font-size: ${nameFontMm(name)}; line-height: .9; white-space: normal; overflow: visible; text-wrap: balance; }
-    .name span { display: block; }
-    .grade { color: #fff; font-size: ${gradeFontMm(gradeLine)}; white-space: nowrap; }
-    .ids { color: #fff; font-size: 2.05mm; line-height: 1.12; }
+    .photo { object-fit: cover; border: .35mm solid #fff; border-radius: 2.05mm; }
+    .qr { background: #fff; }
+    .student-no, .last-name, .first-name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 700; }
+    .student-no, .last-name, .first-name, .ids { color: #00692e; }
+    .student-no, .last-name, .first-name, .grade { text-align: center; }
+    .student-no { font-size: 2.5mm; line-height: 1; white-space: nowrap; }
+    .last-name { font-size: ${lastNameFontMm(lastName)}; line-height: .95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .first-name { font-size: ${firstNameFontMm(firstName)}; line-height: .95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .grade { color: #fff; font-size: ${gradeFontMm(gradeLine)}; line-height: 1; white-space: nowrap; }
+    .ids { font-size: 2.2mm; line-height: 1.04; white-space: nowrap; overflow: hidden; }
     .emergency { color: #063f23; display: grid; grid-template-rows: auto auto auto; gap: 1mm; align-content: center; justify-items: center; text-align: center; padding: 0 1.7mm; }
     .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
     .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.02; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
@@ -148,7 +128,8 @@ export function renderPrintHtml(
     ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
     <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
     <div class="layer student-no" style="${pos(cardLayers.studentNo)}">${escapeHtml(student.admissionNo)}</div>
-    <div class="layer name" style="${pos(cardLayers.name)}">${nameLines}</div>
+    <div class="layer last-name" style="${pos(cardLayers.lastName)}">${escapeHtml(lastName)}</div>
+    <div class="layer first-name" style="${pos(cardLayers.firstName)}">${escapeHtml(firstName)}</div>
     <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(gradeLine)}</div>
     ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}
   </section>

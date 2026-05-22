@@ -8,6 +8,14 @@ export function studentFullName(student: StudentRecord) {
     .trim();
 }
 
+export function studentFirstNameLine(student: StudentRecord) {
+  return (student.firstName || '').replace(/\s+/g, ' ').trim();
+}
+
+export function studentLastNameLine(student: StudentRecord) {
+  return (student.lastName || '').replace(/\s+/g, ' ').trim();
+}
+
 export function studentGradeLine(student: StudentRecord) {
   return [student.grade, student.section].filter(Boolean).join(' - ');
 }

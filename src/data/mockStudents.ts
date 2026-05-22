@@ -38,7 +38,7 @@ export const mockStudents: StudentRecord[] = [
       phone: '0917-111-2026'
     },
     lrn: '123456789101',
-    esc: 'ESC-2026-001'
+    esc: '12345678910'
   },
   {
     id: 'stu-2026002',

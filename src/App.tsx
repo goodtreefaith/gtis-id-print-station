@@ -30,7 +30,13 @@ import { loadOptionalIdCardFont, optionalIdCardFontFaceCss } from './lib/fonts';
 import { cardLayers } from './lib/layout';
 import { renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
-import { readinessFor, studentFullName, studentGradeLine } from './lib/student';
+import {
+  readinessFor,
+  studentFirstNameLine,
+  studentFullName,
+  studentGradeLine,
+  studentLastNameLine
+} from './lib/student';
 import {
   clearOperatorSession,
   hasPortalConfig,
@@ -45,7 +51,7 @@ import {
   updatePhoto
 } from './lib/portalClient';
 
-const FRONT_TEMPLATE = '/templates/2026-2027/front.canva-empty.svg';
+const FRONT_TEMPLATE = '/templates/2026-2027/front.clean-2026.svg';
 const BACK_TEMPLATE = '/templates/2026-2027/back.canva.svg';
 const STUDENT_PAGE_LIMIT = 20;
 
@@ -54,65 +60,34 @@ interface PrintFieldOptions {
   includeEsc: boolean;
 }
 
-function previewNameStyle(name: string): CSSProperties {
-  const lines = splitNameLines(name);
-  const longestLine = Math.max(...lines.map((line) => line.length));
-  let fontSize = 21;
-
-  if (lines.length > 1) {
-    if (longestLine > 28) {
-      fontSize = 13;
-    } else if (longestLine > 24) {
-      fontSize = 14;
-    } else if (longestLine > 20) {
-      fontSize = 15;
-    } else {
-      fontSize = 16;
-    }
-  } else if (longestLine > 30) {
-    fontSize = 13;
-  } else if (longestLine > 26) {
-    fontSize = 16;
-  } else if (longestLine > 22) {
-    fontSize = 18;
-  }
+function previewLastNameStyle(lastName: string): CSSProperties {
+  const length = lastName.length;
+  const fontSize = length > 22 ? 20 : length > 18 ? 23 : length > 14 ? 26 : 31;
 
   return {
-    ...cardLayers.name,
-    fontSize: `${fontSize}px`,
-    lineHeight: lines.length > 1 ? 0.9 : 0.98
+    ...cardLayers.lastName,
+    fontSize: `${fontSize}px`
+  };
+}
+
+function previewFirstNameStyle(firstName: string): CSSProperties {
+  const length = firstName.length;
+  const fontSize = length > 36 ? 15 : length > 30 ? 17 : length > 24 ? 19 : 22;
+
+  return {
+    ...cardLayers.firstName,
+    fontSize: `${fontSize}px`
   };
 }
 
 function previewGradeStyle(grade: string): CSSProperties {
   const length = grade.length;
-  const fontSize = length > 28 ? 12 : length > 23 ? 13 : length > 18 ? 15 : 17;
+  const fontSize = length > 36 ? 14 : length > 30 ? 16 : length > 24 ? 18 : 20;
 
   return {
     ...cardLayers.grade,
     fontSize: `${fontSize}px`
   };
-}
-
-function splitNameLines(name: string) {
-  const words = name.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
-  if (name.length <= 26 || words.length <= 1) {
-    return [name];
-  }
-
-  let bestIndex = 1;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (let index = 1; index < words.length; index += 1) {
-    const first = words.slice(0, index).join(' ');
-    const second = words.slice(index).join(' ');
-    const score = Math.abs(first.length - second.length);
-    if (score < bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-
-  return [words.slice(0, bestIndex).join(' '), words.slice(bestIndex).join(' ')];
 }
 
 function previewEmergencyNameStyle(name: string): CSSProperties {
@@ -793,8 +768,8 @@ function Field({
 
 function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
   const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : ''].filter(Boolean);
-  const name = studentFullName(student);
-  const nameLines = splitNameLines(name);
+  const lastName = studentLastNameLine(student);
+  const firstName = studentFirstNameLine(student);
   const gradeLine = studentGradeLine(student);
 
   return (
@@ -806,10 +781,11 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
           <div className="layer student-no-layer" style={cardLayers.studentNo}>
             {student.admissionNo}
           </div>
-          <div className="layer name-layer" style={previewNameStyle(name)}>
-            {nameLines.map((line) => (
-              <span key={line}>{line}</span>
-            ))}
+          <div className="layer last-name-layer" style={previewLastNameStyle(lastName)}>
+            {lastName}
+          </div>
+          <div className="layer first-name-layer" style={previewFirstNameStyle(firstName)}>
+            {firstName}
           </div>
           <div className="layer grade-layer" style={previewGradeStyle(gradeLine)}>
             {gradeLine}
