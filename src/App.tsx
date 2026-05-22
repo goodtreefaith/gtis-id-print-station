@@ -24,7 +24,10 @@ import { assetToDataUrl } from './lib/assets';
 import {
   emergencyAddressFontPx,
   emergencyNameFontPx,
-  emergencyPhoneFontPx
+  emergencyPhoneFontPx,
+  frontFirstNameFontPx,
+  frontGradeFontPx,
+  frontLastNameFontPx
 } from './lib/cardText';
 import { loadOptionalIdCardFont, optionalIdCardFontFaceCss } from './lib/fonts';
 import { cardLayers } from './lib/layout';
@@ -61,32 +64,23 @@ interface PrintFieldOptions {
 }
 
 function previewLastNameStyle(lastName: string): CSSProperties {
-  const length = lastName.length;
-  const fontSize = length > 22 ? 20 : length > 18 ? 23 : length > 14 ? 26 : 31;
-
   return {
     ...cardLayers.lastName,
-    fontSize: `${fontSize}px`
+    fontSize: `${frontLastNameFontPx(lastName)}px`
   };
 }
 
 function previewFirstNameStyle(firstName: string): CSSProperties {
-  const length = firstName.length;
-  const fontSize = length > 36 ? 15 : length > 30 ? 17 : length > 24 ? 19 : 22;
-
   return {
     ...cardLayers.firstName,
-    fontSize: `${fontSize}px`
+    fontSize: `${frontFirstNameFontPx(firstName)}px`
   };
 }
 
 function previewGradeStyle(grade: string): CSSProperties {
-  const length = grade.length;
-  const fontSize = length > 36 ? 14 : length > 30 ? 16 : length > 24 ? 18 : 20;
-
   return {
     ...cardLayers.grade,
-    fontSize: `${fontSize}px`
+    fontSize: `${frontGradeFontPx(grade)}px`
   };
 }
 

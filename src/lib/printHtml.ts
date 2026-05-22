@@ -3,6 +3,9 @@ import {
   emergencyAddressFontPx,
   emergencyNameFontPx,
   emergencyPhoneFontPx,
+  frontFirstNameFontPx,
+  frontGradeFontPx,
+  frontLastNameFontPx,
   previewPxToPrintMm
 } from './cardText';
 import { ID_CARD_FONT_STACK } from './fonts';
@@ -26,45 +29,15 @@ function escapeHtml(value: string | undefined) {
 }
 
 function lastNameFontMm(lastName: string) {
-  const length = lastName.length;
-  if (length > 22) {
-    return '3.4mm';
-  }
-  if (length > 18) {
-    return '3.9mm';
-  }
-  if (length > 14) {
-    return '4.45mm';
-  }
-  return '5.25mm';
+  return previewPxToPrintMm(frontLastNameFontPx(lastName));
 }
 
 function firstNameFontMm(firstName: string) {
-  const length = firstName.length;
-  if (length > 36) {
-    return '2.55mm';
-  }
-  if (length > 30) {
-    return '2.9mm';
-  }
-  if (length > 24) {
-    return '3.25mm';
-  }
-  return '3.75mm';
+  return previewPxToPrintMm(frontFirstNameFontPx(firstName));
 }
 
 function gradeFontMm(grade: string) {
-  const length = grade.length;
-  if (length > 36) {
-    return '2.35mm';
-  }
-  if (length > 28) {
-    return '2.65mm';
-  }
-  if (length > 23) {
-    return '3mm';
-  }
-  return '3.4mm';
+  return previewPxToPrintMm(frontGradeFontPx(grade));
 }
 
 function emergencyNameFontMm(name: string) {
@@ -112,9 +85,9 @@ export function renderPrintHtml(
     .student-no, .last-name, .first-name, .ids { color: #00692e; }
     .student-no, .last-name, .first-name, .grade { text-align: center; }
     .student-no { font-size: 2.5mm; line-height: 1; white-space: nowrap; }
-    .last-name { font-size: ${lastNameFontMm(lastName)}; line-height: .95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .first-name { font-size: ${firstNameFontMm(firstName)}; line-height: .95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .grade { color: #fff; font-size: ${gradeFontMm(gradeLine)}; line-height: 1; white-space: nowrap; }
+    .last-name { font-size: ${lastNameFontMm(lastName)}; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .first-name { font-size: ${firstNameFontMm(firstName)}; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .grade { color: #fff; font-size: ${gradeFontMm(gradeLine)}; line-height: 1.05; white-space: nowrap; display: flex; align-items: center; justify-content: center; padding: 0 .7mm; overflow: hidden; }
     .ids { font-size: 2.2mm; line-height: 1.04; white-space: nowrap; overflow: hidden; }
     .emergency { color: #063f23; display: grid; grid-template-rows: auto auto auto; gap: 1mm; align-content: center; justify-items: center; text-align: center; padding: 0 1.7mm; }
     .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }

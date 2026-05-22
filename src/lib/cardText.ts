@@ -1,6 +1,8 @@
 const CARD_PREVIEW_WIDTH_PX = 315;
 const CARD_PRINT_WIDTH_MM = 53.98;
 const EMERGENCY_TEXT_WIDTH_PX = 222;
+const FRONT_TEXT_WIDTH_PX = 250;
+const FRONT_GRADE_TEXT_WIDTH_PX = 234;
 
 function normalizedLength(value: string) {
   return value.trim().replace(/\s+/g, ' ').length || 1;
@@ -51,6 +53,33 @@ export function emergencyPhoneFontPx(phone: string) {
     max: 21,
     width: EMERGENCY_TEXT_WIDTH_PX,
     averageGlyphWidth: 0.58
+  });
+}
+
+export function frontLastNameFontPx(lastName: string) {
+  return fittedSingleLinePx(lastName, {
+    min: 18,
+    max: 29,
+    width: FRONT_TEXT_WIDTH_PX,
+    averageGlyphWidth: 0.58
+  });
+}
+
+export function frontFirstNameFontPx(firstName: string) {
+  return fittedSingleLinePx(firstName, {
+    min: 13,
+    max: 22,
+    width: FRONT_TEXT_WIDTH_PX,
+    averageGlyphWidth: 0.56
+  });
+}
+
+export function frontGradeFontPx(grade: string) {
+  return fittedSingleLinePx(grade, {
+    min: 12,
+    max: 20,
+    width: FRONT_GRADE_TEXT_WIDTH_PX,
+    averageGlyphWidth: 0.62
   });
 }
 

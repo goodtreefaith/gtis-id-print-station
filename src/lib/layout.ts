@@ -16,9 +16,9 @@ export const cardLayers = {
   photo: layerStyle(178, 247, 287, 332),
   qr: layerStyle(375, 804, 171, 171),
   studentNo: layerStyle(375, 775, 171, 26),
-  lastName: layerStyle(66, 592, 507, 48),
-  firstName: layerStyle(66, 650, 507, 36),
-  grade: layerStyle(66, 710, 507, 40),
+  lastName: layerStyle(66, 583, 507, 63),
+  firstName: layerStyle(66, 645, 507, 48),
+  grade: layerStyle(66, 695, 507, 70),
   ids: layerStyle(74, 828, 270, 58),
   emergency: layerStyle(76, 400, 490, 165)
 };
