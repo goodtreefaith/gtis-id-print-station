@@ -1,18 +1,35 @@
 import { mockStudents } from '../data/mockStudents';
-import type { GuardianContact, PortalSettings, StudentRecord, StudentSearchResult } from '../types';
+import type { GuardianContact, OperatorSession, PortalSettings, StudentRecord, StudentSearchResult } from '../types';
 import { studentFullName } from './student';
 
 let students = [...mockStudents];
 const STORAGE_KEY = 'gtis-id-print-station.portal-settings';
+const OPERATOR_STORAGE_KEY = 'gtis-id-print-station.operator-session';
 const DEFAULT_PORTAL_URL = 'https://portal.gtis.edu.ph';
 const DEFAULT_LIMIT = 20;
 
-export function loadPortalSettings(): PortalSettings {
-  const fallback: PortalSettings = {
-    baseUrl: DEFAULT_PORTAL_URL,
-    token: '',
-    useMock: true
+interface ViteImportMeta extends ImportMeta {
+  env?: Record<string, string | undefined>;
+}
+
+function envPortalSettings(): PortalSettings {
+  const env = ((import.meta as ViteImportMeta).env || {});
+  const token = (env.VITE_GTIS_IDPRINT_API_TOKEN || '').trim();
+  const useMockValue = (env.VITE_GTIS_IDPRINT_USE_MOCK || '').trim().toLowerCase();
+
+  return {
+    baseUrl: (env.VITE_GTIS_PORTAL_URL || DEFAULT_PORTAL_URL).trim(),
+    token,
+    useMock: useMockValue ? ['1', 'true', 'yes'].includes(useMockValue) : token === ''
   };
+}
+
+export function loadPortalSettings(): PortalSettings {
+  const fallback = envPortalSettings();
+
+  if (fallback.token) {
+    return fallback;
+  }
 
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -20,23 +37,81 @@ export function loadPortalSettings(): PortalSettings {
       return fallback;
     }
 
-    return { ...fallback, ...JSON.parse(saved) };
+    const parsed = { ...fallback, ...JSON.parse(saved) };
+    return parsed.token ? parsed : fallback;
   } catch {
     return fallback;
   }
-}
-
-export function savePortalSettings(settings: PortalSettings) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
 export function hasPortalConfig(settings: PortalSettings) {
   return Boolean(settings.baseUrl.trim() && settings.token.trim() && !settings.useMock);
 }
 
+export function loadOperatorSession(): OperatorSession | null {
+  try {
+    const saved = window.localStorage.getItem(OPERATOR_STORAGE_KEY);
+    if (!saved) {
+      return null;
+    }
+
+    const session = JSON.parse(saved) as OperatorSession;
+    return hasValidOperatorSession(session) ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveOperatorSession(session: OperatorSession) {
+  window.localStorage.setItem(OPERATOR_STORAGE_KEY, JSON.stringify(session));
+}
+
+export function clearOperatorSession() {
+  window.localStorage.removeItem(OPERATOR_STORAGE_KEY);
+}
+
+export function hasValidOperatorSession(session: OperatorSession | null) {
+  return Boolean(session?.token && session.expiresAt && Date.parse(session.expiresAt) > Date.now());
+}
+
+export async function loginOperator(
+  settings: PortalSettings,
+  credentials: { username: string; password: string }
+): Promise<OperatorSession> {
+  if (!hasPortalConfig(settings)) {
+    const session = {
+      token: 'sample',
+      name: credentials.username.trim() || 'Sample Operator',
+      email: credentials.username.trim(),
+      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()
+    };
+    saveOperatorSession(session);
+    return session;
+  }
+
+  const response = await portalFetch<{
+    operator_token: string;
+    operator: { name?: string; email?: string; role?: string };
+    expires_at: string;
+  }>(settings, '/idprintapi/login', {
+    method: 'POST',
+    body: JSON.stringify(credentials)
+  });
+
+  const session = {
+    token: response.operator_token,
+    name: response.operator.name || response.operator.email || 'Portal Operator',
+    email: response.operator.email || credentials.username,
+    role: response.operator.role || '',
+    expiresAt: response.expires_at
+  };
+  saveOperatorSession(session);
+  return session;
+}
+
 export async function searchStudents(
   query: string,
-  options: { page?: number; limit?: number; settings: PortalSettings }
+  options: { page?: number; limit?: number; settings: PortalSettings; operatorToken?: string }
 ): Promise<StudentSearchResult> {
   if (hasPortalConfig(options.settings)) {
     return searchPortalStudents(query, options);
@@ -48,7 +123,8 @@ export async function searchStudents(
 export async function updateGuardian(
   studentId: string,
   guardian: GuardianContact,
-  settings: PortalSettings
+  settings: PortalSettings,
+  operatorToken?: string
 ): Promise<StudentRecord> {
   if (hasPortalConfig(settings)) {
     const response = await portalFetch<{ student: PortalStudent }>(
@@ -61,7 +137,8 @@ export async function updateGuardian(
           guardian_relation: guardian.relation,
           guardian_phone: guardian.phone
         })
-      }
+      },
+      operatorToken
     );
 
     return mapPortalStudent(response.student);
@@ -76,7 +153,8 @@ export async function updateGuardian(
 export async function updatePhoto(
   studentId: string,
   photoUrl: string,
-  settings: PortalSettings
+  settings: PortalSettings,
+  operatorToken?: string
 ): Promise<StudentRecord> {
   if (hasPortalConfig(settings)) {
     const response = await portalFetch<{ student: PortalStudent }>(
@@ -85,7 +163,8 @@ export async function updatePhoto(
       {
         method: 'POST',
         body: JSON.stringify({ photo_data_url: photoUrl })
-      }
+      },
+      operatorToken
     );
 
     return mapPortalStudent(response.student);
@@ -129,13 +208,13 @@ async function searchMockStudents(query: string, page: number, limit: number): P
     page,
     hasMore: start + limit < result.length,
     source: 'mock',
-    message: 'Mock portal mode is active. Add the portal URL and API token to fetch live data.'
+    message: 'Sample data loaded for local testing.'
   };
 }
 
 async function searchPortalStudents(
   query: string,
-  options: { page?: number; limit?: number; settings: PortalSettings }
+  options: { page?: number; limit?: number; settings: PortalSettings; operatorToken?: string }
 ): Promise<StudentSearchResult> {
   const page = options.page || 1;
   const limit = options.limit || DEFAULT_LIMIT;
@@ -148,18 +227,23 @@ async function searchPortalStudents(
     students: PortalStudent[];
     page: number;
     has_more: boolean;
-  }>(options.settings, `/idprintapi/students?${params.toString()}`);
+  }>(options.settings, `/idprintapi/students?${params.toString()}`, {}, options.operatorToken);
 
   return {
     students: response.students.map(mapPortalStudent),
     page: response.page || page,
     hasMore: Boolean(response.has_more),
     source: 'portal',
-    message: 'Live portal data loaded.'
+    message: 'Student records loaded.'
   };
 }
 
-async function portalFetch<T>(settings: PortalSettings, path: string, init: RequestInit = {}) {
+async function portalFetch<T>(
+  settings: PortalSettings,
+  path: string,
+  init: RequestInit = {},
+  operatorToken?: string
+) {
   const base = settings.baseUrl.trim().replace(/\/+$/, '') + '/';
   const url = new URL(path.replace(/^\/+/, ''), base);
   const response = await fetch(url.toString(), {
@@ -168,6 +252,7 @@ async function portalFetch<T>(settings: PortalSettings, path: string, init: Requ
       Accept: 'application/json',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${settings.token.trim()}`,
+      ...(operatorToken ? { 'X-GTIS-IDPRINT-OPERATOR': operatorToken } : {}),
       ...(init.headers || {})
     }
   });

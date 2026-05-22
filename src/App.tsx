@@ -2,6 +2,8 @@ import {
   Camera,
   CheckCircle2,
   FileDown,
+  LogIn,
+  LogOut,
   Printer,
   RefreshCw,
   Save,
@@ -9,17 +11,21 @@ import {
   X
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
-import type { GuardianContact, PortalSettings, PrinterInfo, StudentRecord } from './types';
+import type { CSSProperties, FormEvent } from 'react';
+import type { GuardianContact, OperatorSession, PortalSettings, PrinterInfo, StudentRecord } from './types';
 import { assetToDataUrl } from './lib/assets';
 import { cardLayers } from './lib/layout';
 import { renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
 import { readinessFor, studentFullName, studentGradeLine } from './lib/student';
 import {
+  clearOperatorSession,
   hasPortalConfig,
+  hasValidOperatorSession,
   loadPortalSettings,
-  savePortalSettings,
+  loadOperatorSession,
+  loginOperator,
+  saveOperatorSession,
   searchStudents,
   updateGuardian,
   updatePhoto
@@ -71,14 +77,25 @@ export default function App() {
   const [silentPrint, setSilentPrint] = useState(false);
   const [busy, setBusy] = useState(false);
   const [portalSettings, setPortalSettings] = useState<PortalSettings>(() => loadPortalSettings());
-  const [portalDraft, setPortalDraft] = useState<PortalSettings>(() => loadPortalSettings());
+  const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => loadOperatorSession());
+  const [loginDraft, setLoginDraft] = useState({ username: '', password: '' });
+  const [loginBusy, setLoginBusy] = useState(false);
   const [status, setStatus] = useState(() =>
     hasPortalConfig(loadPortalSettings())
-      ? 'Live portal mode is ready.'
-      : 'Mock portal mode is active. Add portal connection details to fetch live data.'
+      ? 'Sign in with your portal account.'
+      : 'Sample data loaded for local testing.'
   );
+  const liveMode = hasPortalConfig(portalSettings);
+  const operatorReady = !liveMode || hasValidOperatorSession(operatorSession);
 
   useEffect(() => {
+    if (!operatorReady) {
+      setStudents([]);
+      setSelected(null);
+      setStatus('Sign in with your portal account.');
+      return;
+    }
+
     let canceled = false;
     const timeout = window.setTimeout(() => {
       loadStudents(1, true, () => canceled);
@@ -88,7 +105,7 @@ export default function App() {
       canceled = true;
       window.clearTimeout(timeout);
     };
-  }, [query, portalSettings, refreshCount]);
+  }, [query, portalSettings, operatorReady, operatorSession?.token, refreshCount]);
 
   async function loadStudents(page: number, replace: boolean, isCanceled = () => false) {
     setLoadingStudents(true);
@@ -96,7 +113,8 @@ export default function App() {
       const result = await searchStudents(query, {
         page,
         limit: STUDENT_PAGE_LIMIT,
-        settings: portalSettings
+        settings: portalSettings,
+        operatorToken: operatorSession?.token
       });
 
       if (isCanceled()) {
@@ -115,10 +133,10 @@ export default function App() {
         });
         return next;
       });
-      setStatus(result.message || (result.source === 'portal' ? 'Live portal data loaded.' : 'Mock portal mode is active.'));
+      setStatus(result.message || (result.source === 'portal' ? 'Student records loaded.' : 'Sample data loaded for local testing.'));
     } catch (error) {
       if (!isCanceled()) {
-        setStatus(error instanceof Error ? error.message : 'Could not load students from the portal.');
+        setStatus(error instanceof Error ? error.message : 'Could not load students.');
       }
     } finally {
       if (!isCanceled()) {
@@ -192,10 +210,10 @@ export default function App() {
 
     setBusy(true);
     try {
-      const updated = await updateGuardian(selected.id, guardianDraft, portalSettings);
+      const updated = await updateGuardian(selected.id, guardianDraft, portalSettings, operatorSession?.token);
       setStudents((current) => replaceStudent(current, updated));
       setSelected(updated);
-      setStatus(hasPortalConfig(portalSettings) ? 'Guardian contact saved to the portal.' : 'Guardian contact saved in mock mode.');
+      setStatus(hasPortalConfig(portalSettings) ? 'Guardian contact saved.' : 'Guardian contact saved in sample data.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not save guardian contact.');
     } finally {
@@ -210,11 +228,11 @@ export default function App() {
 
     setBusy(true);
     try {
-      const updated = await updatePhoto(selected.id, photoDataUrl, portalSettings);
+      const updated = await updatePhoto(selected.id, photoDataUrl, portalSettings, operatorSession?.token);
       setStudents((current) => replaceStudent(current, updated));
       setSelected(updated);
       setCaptureOpen(false);
-      setStatus(hasPortalConfig(portalSettings) ? 'Approved photo uploaded to the portal.' : 'Approved photo saved in mock mode.');
+      setStatus(hasPortalConfig(portalSettings) ? 'Approved photo saved.' : 'Approved photo saved in sample data.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not update student photo.');
     } finally {
@@ -223,6 +241,11 @@ export default function App() {
   }
 
   async function handlePrint() {
+    if (liveMode && !hasValidOperatorSession(operatorSession)) {
+      setStatus('Sign in before printing.');
+      return;
+    }
+
     setBusy(true);
     try {
       const html = await buildPrintHtml();
@@ -251,6 +274,11 @@ export default function App() {
   }
 
   async function handleSavePdf() {
+    if (liveMode && !hasValidOperatorSession(operatorSession)) {
+      setStatus('Sign in before saving.');
+      return;
+    }
+
     setBusy(true);
     try {
       const html = await buildPrintHtml();
@@ -272,33 +300,76 @@ export default function App() {
     }
   }
 
-  function handleSavePortalSettings() {
-    const cleanSettings = {
-      ...portalDraft,
-      baseUrl: portalDraft.baseUrl.trim(),
-      token: portalDraft.token.trim()
-    };
-    savePortalSettings(cleanSettings);
-    setPortalSettings(cleanSettings);
-    setStudentPage(1);
-    setRefreshCount((value) => value + 1);
-    setStatus(
-      hasPortalConfig(cleanSettings)
-        ? 'Portal connection saved. Refreshing live students...'
-        : 'Mock portal mode is active. Add the portal URL and API token to fetch live data.'
-    );
-  }
-
   function handleRefreshStudents() {
+    setPortalSettings(loadPortalSettings());
     setStudentPage(1);
     setRefreshCount((value) => value + 1);
-    setStatus(hasPortalConfig(portalSettings) ? 'Refreshing live students...' : 'Refreshing mock students...');
+    setStatus('Refreshing students...');
   }
 
   function handleLoadMoreStudents() {
     if (!loadingStudents && hasMoreStudents) {
       loadStudents(studentPage + 1, false);
     }
+  }
+
+  async function handleOperatorLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginBusy(true);
+    setStatus('Signing in...');
+    try {
+      const session = await loginOperator(portalSettings, loginDraft);
+      saveOperatorSession(session);
+      setOperatorSession(session);
+      setLoginDraft({ username: '', password: '' });
+      setRefreshCount((value) => value + 1);
+      setStatus(`Signed in as ${session.name}.`);
+    } catch (error) {
+      clearOperatorSession();
+      setOperatorSession(null);
+      setStatus(error instanceof Error ? error.message : 'Could not sign in.');
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  function handleOperatorLogout() {
+    clearOperatorSession();
+    setOperatorSession(null);
+    setStudents([]);
+    setSelected(null);
+    setStatus('Signed out.');
+  }
+
+  if (!operatorReady) {
+    return (
+      <main className="login-shell">
+        <form className="login-card" onSubmit={handleOperatorLogin}>
+          <div className="brand-lockup">
+            <div className="brand-mark">GT</div>
+            <div>
+              <strong>GTIS ID Print Station</strong>
+              <span>Sign in to continue</span>
+            </div>
+          </div>
+          <Field
+            label="Portal Email"
+            value={loginDraft.username}
+            onChange={(username) => setLoginDraft({ ...loginDraft, username })}
+          />
+          <Field
+            label="Password"
+            type="password"
+            value={loginDraft.password}
+            onChange={(password) => setLoginDraft({ ...loginDraft, password })}
+          />
+          <button className="button primary wide" disabled={loginBusy}>
+            <LogIn size={17} /> {loginBusy ? 'Signing in...' : 'Sign In'}
+          </button>
+          <div className="status-line">{status}</div>
+        </form>
+      </main>
+    );
   }
 
   return (
@@ -321,9 +392,7 @@ export default function App() {
           />
         </label>
         <div className="search-meta">
-          <span className={hasPortalConfig(portalSettings) ? 'mode-pill live' : 'mode-pill'}>
-            {hasPortalConfig(portalSettings) ? 'Live portal' : 'Mock data'}
-          </span>
+          <span className="student-count">{students.length ? `${students.length} student${students.length === 1 ? '' : 's'}` : 'No students'}</span>
           <button className="icon-text-button" onClick={handleRefreshStudents} disabled={loadingStudents}>
             <RefreshCw size={15} /> Refresh
           </button>
@@ -363,9 +432,17 @@ export default function App() {
         <header className="topbar">
           <div>
             <h1>Student ID Printing</h1>
-            <p>{selected ? `${studentFullName(selected)} - ${selected.admissionNo}` : 'Select a student.'}</p>
+            <p>
+              {selected ? `${studentFullName(selected)} - ${selected.admissionNo}` : 'Select a student.'}
+              {liveMode && operatorSession ? ` - Signed in: ${operatorSession.name}` : ''}
+            </p>
           </div>
           <div className="topbar-actions">
+            {liveMode ? (
+              <button className="button secondary" onClick={handleOperatorLogout} disabled={busy}>
+                <LogOut size={17} /> Sign Out
+              </button>
+            ) : null}
             <button className="button secondary" onClick={handleSavePdf} disabled={!selected || busy}>
               <FileDown size={17} /> Save PDF
             </button>
@@ -385,14 +462,6 @@ export default function App() {
           </section>
 
           <aside className="control-panel">
-            <PortalConnectionPanel
-              draft={portalDraft}
-              onChange={setPortalDraft}
-              onSave={handleSavePortalSettings}
-              onRefresh={handleRefreshStudents}
-              loading={loadingStudents}
-            />
-
             {selected && readiness && guardianDraft ? (
               <>
                 <section className="panel-section">
@@ -514,53 +583,6 @@ function Field({
       <span>{label}</span>
       <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
-  );
-}
-
-function PortalConnectionPanel({
-  draft,
-  onChange,
-  onSave,
-  onRefresh,
-  loading
-}: {
-  draft: PortalSettings;
-  onChange: (settings: PortalSettings) => void;
-  onSave: () => void;
-  onRefresh: () => void;
-  loading: boolean;
-}) {
-  return (
-    <section className="panel-section portal-section">
-      <div className="panel-heading-row">
-        <h2>Portal Connection</h2>
-        <button className="icon-text-button" onClick={onRefresh} disabled={loading}>
-          <RefreshCw size={15} /> Refresh
-        </button>
-      </div>
-      <Field
-        label="Portal URL"
-        value={draft.baseUrl}
-        onChange={(baseUrl) => onChange({ ...draft, baseUrl })}
-      />
-      <Field
-        label="API Token"
-        type="password"
-        value={draft.token}
-        onChange={(token) => onChange({ ...draft, token })}
-      />
-      <label className="toggle-row">
-        <input
-          type="checkbox"
-          checked={draft.useMock}
-          onChange={(event) => onChange({ ...draft, useMock: event.target.checked })}
-        />
-        <span>Use mock data</span>
-      </label>
-      <button className="button secondary wide" onClick={onSave}>
-        <Save size={17} /> Save Connection
-      </button>
-    </section>
   );
 }
 

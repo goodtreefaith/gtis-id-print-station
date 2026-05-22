@@ -24,6 +24,14 @@ export interface PortalSettings {
   useMock: boolean;
 }
 
+export interface OperatorSession {
+  token: string;
+  name: string;
+  email: string;
+  role?: string;
+  expiresAt: string;
+}
+
 export interface StudentSearchResult {
   students: StudentRecord[];
   page: number;

@@ -16,7 +16,8 @@ It is intentionally outside the CodeIgniter portal repo. The app can be tested o
 - Save CR80 PDF for Mac testing.
 - Print via Electron using the local OS printer driver.
 
-Live mode needs the matching `idprintapi` routes deployed in the GTIS portal and a device API token configured on the portal server. Without a token, the app stays in mock mode for safe local testing.
+Live mode needs the matching `idprintapi` routes deployed in the GTIS portal and a device API token configured privately on the portal server. Operators do not see or enter this token.
+When live mode is on, operators must also sign in with an allowed portal admin account before searching students, editing guardians, approving photos, saving PDFs, or printing IDs.
 
 ## Development
 
@@ -74,10 +75,13 @@ You can also build it from GitHub:
 
 ## Portal Adapter
 
-Use the Portal Connection panel inside the app:
+Use private environment config for the device:
 
-- Leave `Use mock data` checked for Mac layout/photo/print testing.
-- Enter `https://portal.gtis.edu.ph`, the configured API token, and uncheck `Use mock data` on the Windows NUC.
-- Use `Refresh` to pull newly enrolled students, recently changed guardian contacts, or approved photo updates.
+- Copy `.env.example` to `.env.local`.
+- Set `VITE_GTIS_IDPRINT_API_TOKEN` to the same token configured in the portal.
+- Keep `VITE_GTIS_IDPRINT_USE_MOCK=true` for Mac layout/photo/print testing.
+- Use `VITE_GTIS_IDPRINT_USE_MOCK=false` on the Windows NUC after the portal token is configured.
+- In live mode, use an allowed portal admin login at the app lock screen. The device token stays hidden from the operator.
+- Use `Refresh` in the app to pull newly enrolled students, recently changed guardian contacts, or approved photo updates.
 
 See [docs/portal-api-contract.md](docs/portal-api-contract.md) for the portal API shape.

@@ -1,6 +1,8 @@
 # Portal API Contract
 
-The desktop app can use real GTIS data through the `idprintapi` routes in the CodeIgniter portal. Authentication uses a device/service token stored locally on the Windows NUC. Do not put staff passwords or database credentials into the desktop app.
+The desktop app can use real GTIS data through the `idprintapi` routes in the CodeIgniter portal. Authentication uses a device/service token configured privately for the print-station device. Operators should not see, type, or manage this value.
+
+Live mode also requires an allowed portal admin login. The device token identifies the installed print station; the operator token proves a current staff/admin session before student search, guardian updates, photo uploads, PDF saving, or printing. The default allowed roles are `Admin` and `Super Admin`, configurable in the portal's ID print config.
 
 Set the token on the portal server through `GTIS_IDPRINT_API_TOKEN` or an ignored `application/config/idprint.local.php` file:
 
@@ -19,6 +21,42 @@ or:
 
 ```http
 X-GTIS-IDPRINT-TOKEN: replace-with-a-long-random-token
+```
+
+Protected student/print requests also send:
+
+```http
+X-GTIS-IDPRINT-OPERATOR: operator-token-from-login
+```
+
+## Operator Login
+
+`POST /idprintapi/login`
+
+This route still requires the hidden device token, then checks the same portal staff/admin email and password used by the portal login screen.
+
+```json
+{
+  "username": "admin@example.com",
+  "password": "portal-password"
+}
+```
+
+Returns a short-lived operator token:
+
+```json
+{
+  "status": true,
+  "operator_token": "...",
+  "operator": {
+    "id": 1,
+    "email": "admin@example.com",
+    "name": "Portal Admin",
+    "role": "Admin",
+    "expires": 1780000000
+  },
+  "expires_at": "2026-05-23T01:00:00+08:00"
+}
 ```
 
 ## Search Students

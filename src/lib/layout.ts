@@ -18,5 +18,5 @@ export const cardLayers = {
   name: layerStyle(64, 682, 500, 64),
   grade: layerStyle(64, 744, 250, 44),
   ids: layerStyle(64, 795, 330, 62),
-  emergency: layerStyle(88, 440, 465, 160)
+  emergency: layerStyle(88, 420, 465, 135)
 };

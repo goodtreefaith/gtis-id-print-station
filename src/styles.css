@@ -37,6 +37,24 @@ select {
   grid-template-columns: 340px minmax(0, 1fr);
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+  box-shadow: 0 18px 45px rgba(20, 20, 19, .12);
+}
+
 .search-rail {
   border-right: 1px solid var(--line);
   background: #fff;
@@ -72,7 +90,8 @@ select {
 .topbar p,
 .student-row small,
 .status-line,
-.student-list-note {
+.student-list-note,
+.student-count {
   color: var(--muted);
 }
 
@@ -102,19 +121,9 @@ select {
   gap: 10px;
 }
 
-.mode-pill {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px 9px;
-  color: var(--muted);
+.student-count {
   font-size: 12px;
   font-weight: 800;
-}
-
-.mode-pill.live {
-  border-color: var(--green-100);
-  background: var(--green-50);
-  color: var(--green-700);
 }
 
 .icon-text-button {
@@ -401,11 +410,6 @@ select {
 .panel-section {
   display: grid;
   gap: 12px;
-}
-
-.portal-section {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 18px;
 }
 
 .panel-section h2 {
