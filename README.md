@@ -63,6 +63,13 @@ Windows installer/portable build should be produced on the Windows NUC or anothe
 npm run dist:win
 ```
 
+You can also build it from GitHub:
+
+1. Open the repository on GitHub.
+2. Go to Actions.
+3. Run `Build Windows EXE`.
+4. Download the `gtis-id-print-station-windows` artifact from the completed workflow run.
+
 ## Portal Adapter
 
 The app currently uses mock data. See [docs/portal-api-contract.md](docs/portal-api-contract.md) for the expected portal API shape.
