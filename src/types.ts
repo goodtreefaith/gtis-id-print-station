@@ -29,6 +29,10 @@ export interface OperatorSession {
   name: string;
   email: string;
   role?: string;
+  permissions?: {
+    canView?: boolean;
+    canEdit?: boolean;
+  };
   expiresAt: string;
 }
 

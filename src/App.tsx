@@ -87,6 +87,8 @@ export default function App() {
   );
   const liveMode = hasPortalConfig(portalSettings);
   const operatorReady = !liveMode || hasValidOperatorSession(operatorSession);
+  const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
+  const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
 
   useEffect(() => {
     if (!operatorReady) {
@@ -183,6 +185,7 @@ export default function App() {
   const canPrint = Boolean(
     selected &&
       qrDataUrl &&
+      operatorCanUseStation &&
       readiness?.enrolled &&
       readiness.photo &&
       readiness.guardian &&
@@ -208,6 +211,11 @@ export default function App() {
       return;
     }
 
+    if (!operatorCanEditPortal) {
+      setStatus('This account can print IDs but cannot update portal records.');
+      return;
+    }
+
     setBusy(true);
     try {
       const updated = await updateGuardian(selected.id, guardianDraft, portalSettings, operatorSession?.token);
@@ -223,6 +231,11 @@ export default function App() {
 
   async function handleApprovePhoto(photoDataUrl: string) {
     if (!selected) {
+      return;
+    }
+
+    if (!operatorCanEditPortal) {
+      setStatus('This account can print IDs but cannot update portal records.');
       return;
     }
 
@@ -485,7 +498,7 @@ export default function App() {
                       alt=""
                       className={`photo-current ${selected.photoUrl ? '' : 'is-empty'}`}
                     />
-                    <button className="button secondary" onClick={() => setCaptureOpen(true)}>
+                    <button className="button secondary" onClick={() => setCaptureOpen(true)} disabled={!operatorCanEditPortal}>
                       <Camera size={17} /> Capture Photo
                     </button>
                   </div>
@@ -508,7 +521,7 @@ export default function App() {
                     value={guardianDraft.phone}
                     onChange={(value) => setGuardianDraft({ ...guardianDraft, phone: value })}
                   />
-                  <button className="button secondary wide" onClick={handleSaveGuardian} disabled={busy}>
+                  <button className="button secondary wide" onClick={handleSaveGuardian} disabled={busy || !operatorCanEditPortal}>
                     <Save size={17} /> Save Guardian Contact
                   </button>
                 </section>

@@ -91,7 +91,15 @@ export async function loginOperator(
 
   const response = await portalFetch<{
     operator_token: string;
-    operator: { name?: string; email?: string; role?: string };
+    operator: {
+      name?: string;
+      email?: string;
+      role?: string;
+      permissions?: {
+        can_view?: boolean;
+        can_edit?: boolean;
+      };
+    };
     expires_at: string;
   }>(settings, '/idprintapi/login', {
     method: 'POST',
@@ -103,6 +111,10 @@ export async function loginOperator(
     name: response.operator.name || response.operator.email || 'Portal Operator',
     email: response.operator.email || credentials.username,
     role: response.operator.role || '',
+    permissions: {
+      canView: response.operator.permissions?.can_view !== false,
+      canEdit: response.operator.permissions?.can_edit !== false
+    },
     expiresAt: response.expires_at
   };
   saveOperatorSession(session);
