@@ -1,0 +1,656 @@
+import {
+  Camera,
+  CheckCircle2,
+  FileDown,
+  Printer,
+  RefreshCw,
+  Save,
+  Search,
+  X
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
+import type { GuardianContact, PrinterInfo, StudentRecord } from './types';
+import { assetToDataUrl } from './lib/assets';
+import { cardLayers } from './lib/layout';
+import { renderPrintHtml } from './lib/printHtml';
+import { makeAdmissionQr } from './lib/qr';
+import { readinessFor, studentFullName, studentGradeLine } from './lib/student';
+import { searchStudents, updateGuardian, updatePhoto } from './lib/portalClient';
+
+const FRONT_TEMPLATE = '/templates/2026-2027/front.canva-empty.svg';
+const BACK_TEMPLATE = '/templates/2026-2027/back.canva.svg';
+
+function previewNameStyle(name: string): CSSProperties {
+  const length = name.length;
+  const fontSize = length > 42 ? 13 : length > 34 ? 15 : length > 28 ? 17 : length > 22 ? 19 : 21;
+
+  return {
+    ...cardLayers.name,
+    fontSize: `${fontSize}px`
+  };
+}
+
+function replaceStudent(list: StudentRecord[], updated: StudentRecord) {
+  return list.map((student) => (student.id === updated.id ? updated : student));
+}
+
+export default function App() {
+  const [query, setQuery] = useState('');
+  const [students, setStudents] = useState<StudentRecord[]>([]);
+  const [selected, setSelected] = useState<StudentRecord | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [guardianDraft, setGuardianDraft] = useState<GuardianContact | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [printers, setPrinters] = useState<PrinterInfo[]>([]);
+  const [selectedPrinter, setSelectedPrinter] = useState('');
+  const [silentPrint, setSilentPrint] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('Mock portal mode is active.');
+
+  useEffect(() => {
+    let active = true;
+    searchStudents(query).then((result) => {
+      if (active) {
+        setStudents(result);
+        if (!selected && result.length) {
+          setSelected(result[0]);
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [query, selected]);
+
+  useEffect(() => {
+    if (!selected) {
+      setQrDataUrl('');
+      setGuardianDraft(null);
+      return;
+    }
+
+    setGuardianDraft(selected.guardian);
+    makeAdmissionQr(selected.admissionNo).then(setQrDataUrl).catch(() => {
+      setQrDataUrl('');
+      setStatus('QR generation failed.');
+    });
+  }, [selected]);
+
+  useEffect(() => {
+    if (!window.gtPrint) {
+      return;
+    }
+
+    window.gtPrint.listPrinters().then((availablePrinters) => {
+      setPrinters(availablePrinters);
+      const preferred =
+        availablePrinters.find((printer) => /smart|idp|card/i.test(printer.name)) ||
+        availablePrinters.find((printer) => printer.isDefault) ||
+        availablePrinters[0];
+      if (preferred) {
+        setSelectedPrinter(preferred.name);
+      }
+    });
+  }, []);
+
+  const readiness = useMemo(() => {
+    return selected ? readinessFor(selected, Boolean(qrDataUrl)) : null;
+  }, [selected, qrDataUrl]);
+
+  const canPrint = Boolean(
+    selected &&
+      qrDataUrl &&
+      readiness?.enrolled &&
+      readiness.photo &&
+      readiness.guardian &&
+      readiness.qr &&
+      readiness.cr80
+  );
+
+  async function buildPrintHtml() {
+    if (!selected || !qrDataUrl) {
+      throw new Error('Select a student before printing.');
+    }
+
+    const [front, back] = await Promise.all([
+      assetToDataUrl(new URL(FRONT_TEMPLATE, window.location.href).toString()),
+      assetToDataUrl(new URL(BACK_TEMPLATE, window.location.href).toString())
+    ]);
+
+    return renderPrintHtml(selected, qrDataUrl, { front, back });
+  }
+
+  async function handleSaveGuardian() {
+    if (!selected || !guardianDraft) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const updated = await updateGuardian(selected.id, guardianDraft);
+      setStudents((current) => replaceStudent(current, updated));
+      setSelected(updated);
+      setStatus('Guardian contact saved to the portal record.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not save guardian contact.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleApprovePhoto(photoDataUrl: string) {
+    if (!selected) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const updated = await updatePhoto(selected.id, photoDataUrl);
+      setStudents((current) => replaceStudent(current, updated));
+      setSelected(updated);
+      setCaptureOpen(false);
+      setStatus('Approved photo uploaded to the student profile.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not update student photo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePrint() {
+    setBusy(true);
+    try {
+      const html = await buildPrintHtml();
+      if (window.gtPrint) {
+        const result = await window.gtPrint.printCard(html, {
+          deviceName: selectedPrinter || undefined,
+          silent: silentPrint
+        });
+        setStatus(result.ok ? 'Print job sent.' : result.error || 'Print failed.');
+      } else {
+        const printWindow = window.open('', '_blank', 'width=720,height=960');
+        if (!printWindow) {
+          throw new Error('Popup blocked. Use Electron or allow popups for browser fallback.');
+        }
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 350);
+        setStatus('Opened browser print dialog.');
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not print card.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSavePdf() {
+    setBusy(true);
+    try {
+      const html = await buildPrintHtml();
+      if (!window.gtPrint) {
+        throw new Error('Save PDF is available in the desktop app.');
+      }
+      const result = await window.gtPrint.saveCardPdf(html);
+      if (result.ok) {
+        setStatus(`Saved PDF: ${result.filePath}`);
+      } else if (result.canceled) {
+        setStatus('Save PDF canceled.');
+      } else {
+        setStatus(result.error || 'Could not save PDF.');
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not save PDF.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="app-shell">
+      <aside className="search-rail">
+        <div className="brand-lockup">
+          <div className="brand-mark">GT</div>
+          <div>
+            <strong>GTIS ID Print Station</strong>
+            <span>2026-2027 ISO CR80</span>
+          </div>
+        </div>
+
+        <label className="search-box">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name or admission no."
+          />
+        </label>
+
+        <div className="student-list">
+          {students.map((student) => (
+            <button
+              key={student.id}
+              className={`student-row ${selected?.id === student.id ? 'is-active' : ''}`}
+              onClick={() => setSelected(student)}
+            >
+              <img
+                src={student.photoUrl || ''}
+                alt=""
+                className={`student-thumb ${student.photoUrl ? '' : 'is-empty'}`}
+              />
+              <span>
+                <strong>{studentFullName(student)}</strong>
+                <small>
+                  {student.admissionNo} - {studentGradeLine(student)}
+                </small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      <section className="workspace">
+        <header className="topbar">
+          <div>
+            <h1>Student ID Printing</h1>
+            <p>{selected ? `${studentFullName(selected)} - ${selected.admissionNo}` : 'Select a student.'}</p>
+          </div>
+          <div className="topbar-actions">
+            <button className="button secondary" onClick={handleSavePdf} disabled={!selected || busy}>
+              <FileDown size={17} /> Save PDF
+            </button>
+            <button className="button primary" onClick={handlePrint} disabled={!canPrint || busy}>
+              <Printer size={17} /> Print ID
+            </button>
+          </div>
+        </header>
+
+        <div className="content-grid">
+          <section className="preview-panel">
+            {selected && qrDataUrl ? (
+              <CardPreview student={selected} qrDataUrl={qrDataUrl} />
+            ) : (
+              <div className="empty-state">Select a student to preview the ID card.</div>
+            )}
+          </section>
+
+          <aside className="control-panel">
+            {selected && readiness && guardianDraft ? (
+              <>
+                <section className="panel-section">
+                  <h2>Readiness</h2>
+                  <CheckList
+                    items={[
+                      ['Current enrollment', readiness.enrolled],
+                      ['Photo approved', readiness.photo],
+                      ['Guardian phone', readiness.guardian],
+                      ['Admission QR', readiness.qr],
+                      ['ISO CR80 output', readiness.cr80]
+                    ]}
+                  />
+                </section>
+
+                <section className="panel-section">
+                  <h2>Photo</h2>
+                  <div className="photo-row">
+                    <img
+                      src={selected.photoUrl || ''}
+                      alt=""
+                      className={`photo-current ${selected.photoUrl ? '' : 'is-empty'}`}
+                    />
+                    <button className="button secondary" onClick={() => setCaptureOpen(true)}>
+                      <Camera size={17} /> Capture Photo
+                    </button>
+                  </div>
+                </section>
+
+                <section className="panel-section">
+                  <h2>Guardian Contact</h2>
+                  <Field
+                    label="Name"
+                    value={guardianDraft.name}
+                    onChange={(value) => setGuardianDraft({ ...guardianDraft, name: value })}
+                  />
+                  <Field
+                    label="Relation"
+                    value={guardianDraft.relation}
+                    onChange={(value) => setGuardianDraft({ ...guardianDraft, relation: value })}
+                  />
+                  <Field
+                    label="Phone"
+                    value={guardianDraft.phone}
+                    onChange={(value) => setGuardianDraft({ ...guardianDraft, phone: value })}
+                  />
+                  <button className="button secondary wide" onClick={handleSaveGuardian} disabled={busy}>
+                    <Save size={17} /> Save Guardian Contact
+                  </button>
+                </section>
+
+                <section className="panel-section">
+                  <h2>Printer</h2>
+                  <label className="field">
+                    <span>Device</span>
+                    <select value={selectedPrinter} onChange={(event) => setSelectedPrinter(event.target.value)}>
+                      <option value="">System print dialog</option>
+                      {printers.map((printer) => (
+                        <option key={printer.name} value={printer.name}>
+                          {printer.displayName || printer.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={silentPrint}
+                      onChange={(event) => setSilentPrint(event.target.checked)}
+                    />
+                    <span>Silent print on Windows NUC</span>
+                  </label>
+                </section>
+              </>
+            ) : null}
+
+            <div className="status-line">{busy ? 'Working...' : status}</div>
+          </aside>
+        </div>
+      </section>
+
+      {captureOpen && selected ? (
+        <CaptureModal
+          studentName={studentFullName(selected)}
+          onApprove={handleApprovePhoto}
+          onClose={() => setCaptureOpen(false)}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function CheckList({ items }: { items: Array<[string, boolean]> }) {
+  return (
+    <ul className="check-list">
+      {items.map(([label, ok]) => (
+        <li key={label} className={ok ? 'ok' : 'needs-work'}>
+          <CheckCircle2 size={16} />
+          <span>{label}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
+  const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : ''].filter(Boolean);
+  const name = studentFullName(student);
+  const longName = name.length > 28;
+
+  return (
+    <div className="cards-wrap">
+      <div className="card-shell">
+        <CardPage background={FRONT_TEMPLATE}>
+          {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
+          <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
+          <div className="layer admission-layer" style={cardLayers.admission}>
+            <span className="admission-label">Student No</span>
+            <span className="admission-value">{student.admissionNo}</span>
+          </div>
+          <div className={`layer name-layer${longName ? ' is-long' : ''}`} style={previewNameStyle(name)}>
+            {name}
+          </div>
+          <div className="layer grade-layer" style={cardLayers.grade}>
+            {studentGradeLine(student)}
+          </div>
+          {idLines.length ? (
+            <div className="layer ids-layer" style={cardLayers.ids}>
+              {idLines.map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+            </div>
+          ) : null}
+          <div className="layer year-layer" style={cardLayers.schoolYear}>
+            <span className="year-label">School Year</span>
+            <span className="year-value">2026-2027</span>
+          </div>
+        </CardPage>
+        <span>Front</span>
+      </div>
+
+      <div className="card-shell">
+        <CardPage background={BACK_TEMPLATE}>
+          <div className="layer emergency-layer" style={cardLayers.emergency}>
+            <strong>{student.guardian.name}</strong>
+            <span>{student.guardian.relation}</span>
+            <b>{student.guardian.phone}</b>
+          </div>
+        </CardPage>
+        <span>Back</span>
+      </div>
+    </div>
+  );
+}
+
+function CardPage({ background, children }: { background: string; children: React.ReactNode }) {
+  return (
+    <div className="card-page">
+      <img src={background} className="card-bg" alt="" />
+      {children}
+    </div>
+  );
+}
+
+function CaptureModal({
+  studentName,
+  onApprove,
+  onClose
+}: {
+  studentName: string;
+  onApprove: (photoDataUrl: string) => void;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [error, setError] = useState('');
+  const [rawCapture, setRawCapture] = useState('');
+  const [zoom, setZoom] = useState(1.15);
+  const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    navigator.mediaDevices
+      ?.getUserMedia({
+        audio: false,
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        }
+      })
+      .then((stream) => {
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      })
+      .catch(() => setError('Camera is unavailable. Use manual upload in the production connector.'));
+
+    return () => {
+      active = false;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
+  function captureFrame() {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    setRawCapture(canvas.toDataURL('image/jpeg', 0.95));
+  }
+
+  async function approve() {
+    if (!rawCapture) {
+      return;
+    }
+    const cropped = await renderCroppedPhoto(rawCapture, zoom, offsetX, offsetY);
+    onApprove(cropped);
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <section className="capture-modal">
+        <header>
+          <div>
+            <h2>Capture Photo</h2>
+            <p>{studentName}</p>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="capture-grid">
+          <div className="camera-box">
+            {rawCapture ? (
+              <div className="crop-frame">
+                <img
+                  src={rawCapture}
+                  alt=""
+                  style={{
+                    transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="video-frame">
+                <video ref={videoRef} autoPlay playsInline muted />
+                <div className="head-guide">
+                  <div className="head-oval" />
+                  <div className="shoulder-line" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <aside className="capture-controls">
+            {error ? <div className="warning">{error}</div> : null}
+            {rawCapture ? (
+              <>
+                <label className="field">
+                  <span>Zoom</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="2.4"
+                    step="0.05"
+                    value={zoom}
+                    onChange={(event) => setZoom(Number(event.target.value))}
+                  />
+                </label>
+                <label className="field">
+                  <span>Horizontal</span>
+                  <input
+                    type="range"
+                    min="-120"
+                    max="120"
+                    value={offsetX}
+                    onChange={(event) => setOffsetX(Number(event.target.value))}
+                  />
+                </label>
+                <label className="field">
+                  <span>Vertical</span>
+                  <input
+                    type="range"
+                    min="-120"
+                    max="120"
+                    value={offsetY}
+                    onChange={(event) => setOffsetY(Number(event.target.value))}
+                  />
+                </label>
+                <button className="button secondary wide" onClick={() => setRawCapture('')}>
+                  <RefreshCw size={17} /> Retake
+                </button>
+                <button className="button primary wide" onClick={approve}>
+                  <CheckCircle2 size={17} /> Approve Photo
+                </button>
+              </>
+            ) : (
+              <button className="button primary wide" onClick={captureFrame} disabled={Boolean(error)}>
+                <Camera size={17} /> Capture
+              </button>
+            )}
+          </aside>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+async function renderCroppedPhoto(source: string, zoom: number, offsetX: number, offsetY: number) {
+  const image = await loadImage(source);
+  const outputWidth = 840;
+  const outputHeight = 1260;
+  const canvas = document.createElement('canvas');
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return source;
+  }
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, outputWidth, outputHeight);
+
+  const baseScale = Math.max(outputWidth / image.width, outputHeight / image.height);
+  const scale = baseScale * zoom;
+  const width = image.width * scale;
+  const height = image.height * scale;
+  const x = (outputWidth - width) / 2 + offsetX * 2;
+  const y = (outputHeight - height) / 2 + offsetY * 2;
+
+  context.drawImage(image, x, y, width, height);
+  return canvas.toDataURL('image/jpeg', 0.94);
+}
+
+function loadImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Could not load captured photo.'));
+    image.src = source;
+  });
+}
