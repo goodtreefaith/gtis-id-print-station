@@ -106,7 +106,7 @@ export function renderPrintHtml(
     .page:last-child { page-break-after: auto; }
     .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .layer { position: absolute; z-index: 2; }
-    .photo { object-fit: cover; border: .35mm solid #fff; border-radius: 2.05mm; }
+    .photo { object-fit: cover; border-radius: 2.05mm; }
     .qr { background: #fff; }
     .student-no, .last-name, .first-name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 700; }
     .student-no, .last-name, .first-name, .ids { color: #00692e; }

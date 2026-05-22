@@ -330,7 +330,6 @@ select {
 
 .photo-layer {
   object-fit: cover;
-  border: 2px solid #fff;
   border-radius: 12px;
 }
 

@@ -13,7 +13,7 @@ export function layerStyle(x: number, y: number, width: number, height?: number)
 }
 
 export const cardLayers = {
-  photo: layerStyle(184, 252, 271, 321),
+  photo: layerStyle(178, 247, 287, 332),
   qr: layerStyle(375, 804, 171, 171),
   studentNo: layerStyle(375, 775, 171, 26),
   lastName: layerStyle(66, 592, 507, 48),
