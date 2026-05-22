@@ -130,7 +130,7 @@ export function renderPrintHtml(
     .layer { position: absolute; z-index: 2; }
     .photo { object-fit: cover; border-radius: 2.2mm; }
     .qr { background: #fff; padding: .8mm; }
-    .student-no, .name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 900; }
+    .student-no, .name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 700; }
     .student-no { color: #fff; font-size: 3.6mm; line-height: .98; white-space: nowrap; }
     .name { color: #fff; font-size: ${nameFontMm(name)}; line-height: .9; white-space: normal; overflow: visible; text-wrap: balance; }
     .name span { display: block; }

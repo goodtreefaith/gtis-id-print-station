@@ -80,6 +80,7 @@ Returns active students enrolled in the current portal session. The app uses thi
       "photo_url": "https://portal.gtis.edu.ph/uploads/student_images/123.jpg",
       "guardian_name": "Maria Bamba",
       "guardian_relation": "Mother",
+      "guardian_address": "1 Bagtas Tanza Cavite",
       "guardian_phone": "0917-111-2026",
       "lrn": "123456789101",
       "esc": "ESC-2026-001"
@@ -101,11 +102,25 @@ The QR code is generated locally from `admission_no`.
 {
   "guardian_name": "Maria Bamba",
   "guardian_relation": "Mother",
+  "guardian_address": "1 Bagtas Tanza Cavite",
   "guardian_phone": "0917-111-2026"
 }
 ```
 
-The portal updates `students.guardian_name`, `students.guardian_relation`, and `students.guardian_phone`, then returns the updated student payload.
+The portal updates `students.guardian_name`, `students.guardian_relation`, `students.guardian_address`, and `students.guardian_phone`, then returns the updated student payload.
+
+## Update Student Identifiers
+
+`POST /idprintapi/students/{student_id}/id-details`
+
+```json
+{
+  "lrn": "123456789101",
+  "esc": "ESC-2026-001"
+}
+```
+
+The portal updates `students.adhar_no` for LRN and `students.samagra_id` for ESC, then returns the updated student payload. Either value may be blank.
 
 ## Upload Approved Photo
 

@@ -12,7 +12,7 @@
   --text: #141413;
   --muted: #565651;
   --danger: #dc2626;
-  --id-card-font: "GTIS Avenir ExtraBold", "Avenir Next", Avenir, "Arial Black", Arial, sans-serif;
+  --id-card-font: "GTIS Avenir Bold", "Avenir Next", Avenir, Arial, sans-serif;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
 }
 
@@ -344,7 +344,7 @@ select {
 .ids-layer {
   color: #fff;
   font-family: var(--id-card-font);
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .name-layer {
@@ -388,7 +388,7 @@ select {
   text-align: center;
   padding: 0 10px;
   font-family: var(--id-card-font);
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .emergency-layer strong {

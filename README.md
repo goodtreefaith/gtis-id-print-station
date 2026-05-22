@@ -12,7 +12,8 @@ It is intentionally outside the CodeIgniter portal repo. The app can be tested o
 - Preview ISO CR80 front/back cards.
 - Capture webcam photos with a head-position guide.
 - Crop, retake, preview, and approve photos.
-- Edit guardian emergency contact in the app and save it back to the portal when live mode is configured.
+- Edit guardian emergency contact, LRN, and ESC in the app and save them back to the portal when live mode is configured.
+- Include or hide LRN and ESC per print without changing the saved portal values.
 - Save CR80 PDF for Mac testing.
 - Print via Electron using the local OS printer driver.
 
@@ -45,7 +46,7 @@ The app uses the Canva SVG exports as the production card artwork:
 - `public/templates/2026-2027/front.canva-empty.svg`
 - `public/templates/2026-2027/back.canva.svg`
 
-The SVG front intentionally has no live photo/name/LRN/ESC data and no QR code. The app places the approved photo, QR code, name, grade, LRN, and ESC on top at print time.
+The SVG front intentionally has no live photo/name/LRN/ESC data and no QR code. The app places the approved photo, QR code, name, grade, LRN, and ESC on top at print time, aligned to the Canva reference.
 The school year and student-number label/value are treated as design artwork, so the app no longer overlays extra school-year or student-number text. The QR code is still generated from `students.admission_no`.
 
 Reference assets are kept only for comparison:
@@ -82,6 +83,6 @@ Use private environment config for the device:
 - Keep `VITE_GTIS_IDPRINT_USE_MOCK=true` for Mac layout/photo/print testing.
 - Use `VITE_GTIS_IDPRINT_USE_MOCK=false` on the Windows NUC after the portal token is configured.
 - In live mode, use an allowed portal admin login at the app lock screen. The device token stays hidden from the operator.
-- Use `Refresh` in the app to pull newly enrolled students, recently changed guardian contacts, or approved photo updates.
+- Use `Refresh` in the app to pull newly enrolled students, recently changed guardian contacts, updated LRN/ESC values, or approved photo updates.
 
 See [docs/portal-api-contract.md](docs/portal-api-contract.md) for the portal API shape.

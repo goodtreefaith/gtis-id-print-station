@@ -12,7 +12,14 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent } from 'react';
-import type { GuardianContact, OperatorSession, PortalSettings, PrinterInfo, StudentRecord } from './types';
+import type {
+  GuardianContact,
+  OperatorSession,
+  PortalSettings,
+  PrinterInfo,
+  StudentIdDetails,
+  StudentRecord
+} from './types';
 import { assetToDataUrl } from './lib/assets';
 import {
   emergencyAddressFontPx,
@@ -34,12 +41,18 @@ import {
   saveOperatorSession,
   searchStudents,
   updateGuardian,
+  updateIdDetails,
   updatePhoto
 } from './lib/portalClient';
 
 const FRONT_TEMPLATE = '/templates/2026-2027/front.canva-empty.svg';
 const BACK_TEMPLATE = '/templates/2026-2027/back.canva.svg';
 const STUDENT_PAGE_LIMIT = 20;
+
+interface PrintFieldOptions {
+  includeLrn: boolean;
+  includeEsc: boolean;
+}
 
 function previewNameStyle(name: string): CSSProperties {
   const lines = splitNameLines(name);
@@ -114,6 +127,23 @@ function previewEmergencyPhoneStyle(phone: string): CSSProperties {
   return { fontSize: `${emergencyPhoneFontPx(phone)}px` };
 }
 
+function printableStudent(
+  student: StudentRecord,
+  guardianDraft: GuardianContact | null,
+  idDraft: StudentIdDetails | null,
+  printFields: PrintFieldOptions
+): StudentRecord {
+  const lrn = idDraft?.lrn.trim() || '';
+  const esc = idDraft?.esc.trim() || '';
+
+  return {
+    ...student,
+    guardian: guardianDraft || student.guardian,
+    lrn: printFields.includeLrn ? lrn : '',
+    esc: printFields.includeEsc ? esc : ''
+  };
+}
+
 function replaceStudent(list: StudentRecord[], updated: StudentRecord) {
   return list.map((student) => (student.id === updated.id ? updated : student));
 }
@@ -133,6 +163,8 @@ export default function App() {
   const [refreshCount, setRefreshCount] = useState(0);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [guardianDraft, setGuardianDraft] = useState<GuardianContact | null>(null);
+  const [idDraft, setIdDraft] = useState<StudentIdDetails | null>(null);
+  const [printFields, setPrintFields] = useState<PrintFieldOptions>({ includeLrn: true, includeEsc: true });
   const [captureOpen, setCaptureOpen] = useState(false);
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState('');
@@ -217,15 +249,18 @@ export default function App() {
     if (!selected) {
       setQrDataUrl('');
       setGuardianDraft(null);
+      setIdDraft(null);
       return;
     }
 
     setGuardianDraft(selected.guardian);
+    setIdDraft({ lrn: selected.lrn || '', esc: selected.esc || '' });
+    setPrintFields({ includeLrn: Boolean(selected.lrn), includeEsc: Boolean(selected.esc) });
     makeAdmissionQr(selected.admissionNo).then(setQrDataUrl).catch(() => {
       setQrDataUrl('');
       setStatus('QR generation failed.');
     });
-  }, [selected]);
+  }, [selected?.id]);
 
   useEffect(() => {
     if (!window.gtPrint) {
@@ -248,6 +283,10 @@ export default function App() {
     return selected ? readinessFor(selected, Boolean(qrDataUrl)) : null;
   }, [selected, qrDataUrl]);
 
+  const previewStudent = useMemo(() => {
+    return selected ? printableStudent(selected, guardianDraft, idDraft, printFields) : null;
+  }, [selected, guardianDraft, idDraft, printFields]);
+
   const canPrint = Boolean(
     selected &&
       qrDataUrl &&
@@ -260,7 +299,7 @@ export default function App() {
   );
 
   async function buildPrintHtml() {
-    if (!selected || !qrDataUrl) {
+    if (!previewStudent || !qrDataUrl) {
       throw new Error('Select a student before printing.');
     }
 
@@ -270,7 +309,7 @@ export default function App() {
       optionalIdCardFontFaceCss()
     ]);
 
-    return renderPrintHtml(selected, qrDataUrl, { front, back, idCardFontFaceCss });
+    return renderPrintHtml(previewStudent, qrDataUrl, { front, back, idCardFontFaceCss });
   }
 
   async function handleSaveGuardian() {
@@ -294,6 +333,47 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleSaveIdDetails() {
+    if (!selected || !idDraft) {
+      return;
+    }
+
+    if (!operatorCanEditPortal) {
+      setStatus('This account can print IDs but cannot update portal records.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const nextDetails = {
+        lrn: idDraft.lrn.trim(),
+        esc: idDraft.esc.trim()
+      };
+      const updated = await updateIdDetails(selected.id, nextDetails, portalSettings, operatorSession?.token);
+      setStudents((current) => replaceStudent(current, updated));
+      setSelected(updated);
+      setPrintFields((current) => ({
+        includeLrn: nextDetails.lrn ? current.includeLrn : false,
+        includeEsc: nextDetails.esc ? current.includeEsc : false
+      }));
+      setStatus(hasPortalConfig(portalSettings) ? 'Student identifiers saved.' : 'Student identifiers saved in sample data.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not save student identifiers.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleLrnChange(value: string) {
+    setIdDraft((current) => ({ lrn: value, esc: current?.esc || '' }));
+    setPrintFields((current) => ({ ...current, includeLrn: value.trim() ? true : false }));
+  }
+
+  function handleEscChange(value: string) {
+    setIdDraft((current) => ({ lrn: current?.lrn || '', esc: value }));
+    setPrintFields((current) => ({ ...current, includeEsc: value.trim() ? true : false }));
   }
 
   async function handleApprovePhoto(photoDataUrl: string) {
@@ -534,9 +614,9 @@ export default function App() {
 
         <div className="content-grid">
           <section className="preview-panel">
-            {selected && qrDataUrl ? (
+            {previewStudent && qrDataUrl ? (
               <CardPreview
-                student={guardianDraft ? { ...selected, guardian: guardianDraft } : selected}
+                student={previewStudent}
                 qrDataUrl={qrDataUrl}
               />
             ) : (
@@ -545,7 +625,7 @@ export default function App() {
           </section>
 
           <aside className="control-panel">
-            {selected && readiness && guardianDraft ? (
+            {selected && readiness && guardianDraft && idDraft ? (
               <>
                 <section className="panel-section">
                   <h2>Readiness</h2>
@@ -594,6 +674,41 @@ export default function App() {
                   />
                   <button className="button secondary wide" onClick={handleSaveGuardian} disabled={busy || !operatorCanEditPortal}>
                     <Save size={17} /> Save Guardian Contact
+                  </button>
+                </section>
+
+                <section className="panel-section">
+                  <h2>Student Identifiers</h2>
+                  <Field
+                    label="LRN"
+                    value={idDraft.lrn}
+                    onChange={handleLrnChange}
+                  />
+                  <label className="toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={printFields.includeLrn}
+                      disabled={!idDraft.lrn.trim()}
+                      onChange={(event) => setPrintFields({ ...printFields, includeLrn: event.target.checked })}
+                    />
+                    <span>Print LRN</span>
+                  </label>
+                  <Field
+                    label="ESC"
+                    value={idDraft.esc}
+                    onChange={handleEscChange}
+                  />
+                  <label className="toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={printFields.includeEsc}
+                      disabled={!idDraft.esc.trim()}
+                      onChange={(event) => setPrintFields({ ...printFields, includeEsc: event.target.checked })}
+                    />
+                    <span>Print ESC</span>
+                  </label>
+                  <button className="button secondary wide" onClick={handleSaveIdDetails} disabled={busy || !operatorCanEditPortal}>
+                    <Save size={17} /> Save Student Identifiers
                   </button>
                 </section>
 

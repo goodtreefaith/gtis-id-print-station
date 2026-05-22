@@ -1,5 +1,12 @@
 import { mockStudents } from '../data/mockStudents';
-import type { GuardianContact, OperatorSession, PortalSettings, StudentRecord, StudentSearchResult } from '../types';
+import type {
+  GuardianContact,
+  OperatorSession,
+  PortalSettings,
+  StudentIdDetails,
+  StudentRecord,
+  StudentSearchResult
+} from '../types';
 import { studentFullName } from './student';
 
 let students = [...mockStudents];
@@ -163,6 +170,35 @@ export async function updateGuardian(
   return requireStudent(studentId);
 }
 
+export async function updateIdDetails(
+  studentId: string,
+  idDetails: StudentIdDetails,
+  settings: PortalSettings,
+  operatorToken?: string
+): Promise<StudentRecord> {
+  if (hasPortalConfig(settings)) {
+    const response = await portalFetch<{ student: PortalStudent }>(
+      settings,
+      `/idprintapi/students/${encodeURIComponent(studentId)}/id-details`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          lrn: idDetails.lrn,
+          esc: idDetails.esc
+        })
+      },
+      operatorToken
+    );
+
+    return mapPortalStudent(response.student);
+  }
+
+  students = students.map((student) =>
+    student.id === studentId ? { ...student, lrn: idDetails.lrn, esc: idDetails.esc } : student
+  );
+  return requireStudent(studentId);
+}
+
 export async function updatePhoto(
   studentId: string,
   photoUrl: string,
@@ -204,7 +240,9 @@ async function searchMockStudents(query: string, page: number, limit: number): P
         student.section,
         student.guardian.name,
         student.guardian.address,
-        student.guardian.phone
+        student.guardian.phone,
+        student.lrn,
+        student.esc
       ]
         .filter(Boolean)
         .join(' ')

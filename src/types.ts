@@ -5,6 +5,11 @@ export interface GuardianContact {
   phone: string;
 }
 
+export interface StudentIdDetails {
+  lrn: string;
+  esc: string;
+}
+
 export interface StudentRecord {
   id: string;
   admissionNo: string;
