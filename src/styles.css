@@ -338,33 +338,40 @@ select {
 
 .name-layer,
 .grade-layer,
+.student-no-layer,
 .ids-layer {
   color: #fff;
   font-weight: 900;
-  line-height: 1;
 }
 
 .name-layer {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: normal;
+  text-wrap: balance;
 }
 
-.name-layer.is-long {
-  display: -webkit-box;
-  line-height: 1.05;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+.name-layer span {
+  display: block;
+}
+
+.student-no-layer {
+  font-size: 22px;
+  line-height: .98;
+  white-space: nowrap;
 }
 
 .grade-layer {
   font-size: 17px;
+  line-height: 1;
   white-space: nowrap;
 }
 
 .ids-layer {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.12;
 }
 

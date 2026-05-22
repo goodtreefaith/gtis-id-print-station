@@ -19,20 +19,67 @@ function escapeHtml(value: string | undefined) {
 }
 
 function nameFontMm(name: string) {
-  const length = name.length;
-  if (length > 42) {
+  const lines = splitNameLines(name);
+  const longestLine = Math.max(...lines.map((line) => line.length));
+
+  if (lines.length > 1) {
+    if (longestLine > 28) {
+      return '2.15mm';
+    }
+    if (longestLine > 24) {
+      return '2.35mm';
+    }
+    if (longestLine > 20) {
+      return '2.55mm';
+    }
+    return '2.75mm';
+  }
+
+  if (longestLine > 30) {
+    return '2.2mm';
+  }
+  if (longestLine > 26) {
+    return '2.7mm';
+  }
+  if (longestLine > 22) {
+    return '3mm';
+  }
+  return '3.55mm';
+}
+
+function gradeFontMm(grade: string) {
+  const length = grade.length;
+  if (length > 28) {
+    return '2.05mm';
+  }
+  if (length > 23) {
     return '2.25mm';
   }
-  if (length > 34) {
-    return '2.6mm';
+  if (length > 18) {
+    return '2.55mm';
   }
-  if (length > 28) {
-    return '2.9mm';
+  return '2.9mm';
+}
+
+function splitNameLines(name: string) {
+  const words = name.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  if (name.length <= 26 || words.length <= 1) {
+    return [name];
   }
-  if (length > 22) {
-    return '3.25mm';
+
+  let bestIndex = 1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < words.length; index += 1) {
+    const first = words.slice(0, index).join(' ');
+    const second = words.slice(index).join(' ');
+    const score = Math.abs(first.length - second.length);
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
   }
-  return '3.6mm';
+
+  return [words.slice(0, bestIndex).join(' '), words.slice(bestIndex).join(' ')];
 }
 
 function emergencyNameFontMm(name: string) {
@@ -55,7 +102,8 @@ export function renderPrintHtml(
   assets: { front: string; back: string }
 ) {
   const name = studentFullName(student);
-  const nameClass = name.length > 28 ? 'name is-long' : 'name';
+  const nameLines = splitNameLines(name).map((line) => `<span>${escapeHtml(line)}</span>`).join('');
+  const gradeLine = studentGradeLine(student);
   const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : '']
     .filter(Boolean)
     .map((line) => `<div>${escapeHtml(line)}</div>`)
@@ -76,10 +124,11 @@ export function renderPrintHtml(
     .layer { position: absolute; z-index: 2; }
     .photo { object-fit: cover; border-radius: 2.2mm; }
     .qr { background: #fff; padding: .8mm; }
-    .name { color: #fff; font-weight: 900; font-size: ${nameFontMm(name)}; line-height: .98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .name.is-long { display: -webkit-box; line-height: 1.05; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .grade { color: #fff; font-weight: 900; font-size: 2.9mm; white-space: nowrap; }
-    .ids { color: #fff; font-weight: 900; font-size: 2.2mm; line-height: 1.12; }
+    .student-no { color: #fff; font-weight: 900; font-size: 3.6mm; line-height: .98; white-space: nowrap; }
+    .name { color: #fff; font-weight: 900; font-size: ${nameFontMm(name)}; line-height: .9; white-space: normal; overflow: visible; text-wrap: balance; }
+    .name span { display: block; }
+    .grade { color: #fff; font-weight: 900; font-size: ${gradeFontMm(gradeLine)}; white-space: nowrap; }
+    .ids { color: #fff; font-weight: 900; font-size: 2.05mm; line-height: 1.12; }
     .emergency { color: #063f23; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
     .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1.05; font-weight: 900; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .emergency-relation { font-size: 2.05mm; margin-top: 1mm; font-weight: 700; }
@@ -91,8 +140,9 @@ export function renderPrintHtml(
     <img class="bg" src="${assets.front}" />
     ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
     <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
-    <div class="layer ${nameClass}" style="${pos(cardLayers.name)}">${escapeHtml(name)}</div>
-    <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(studentGradeLine(student))}</div>
+    <div class="layer student-no" style="${pos(cardLayers.studentNo)}">${escapeHtml(student.admissionNo)}</div>
+    <div class="layer name" style="${pos(cardLayers.name)}">${nameLines}</div>
+    <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(gradeLine)}</div>
     ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}
   </section>
   <section class="page">

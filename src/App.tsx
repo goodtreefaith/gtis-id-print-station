@@ -36,13 +36,64 @@ const BACK_TEMPLATE = '/templates/2026-2027/back.canva.svg';
 const STUDENT_PAGE_LIMIT = 20;
 
 function previewNameStyle(name: string): CSSProperties {
-  const length = name.length;
-  const fontSize = length > 42 ? 13 : length > 34 ? 15 : length > 28 ? 17 : length > 22 ? 19 : 21;
+  const lines = splitNameLines(name);
+  const longestLine = Math.max(...lines.map((line) => line.length));
+  let fontSize = 21;
+
+  if (lines.length > 1) {
+    if (longestLine > 28) {
+      fontSize = 13;
+    } else if (longestLine > 24) {
+      fontSize = 14;
+    } else if (longestLine > 20) {
+      fontSize = 15;
+    } else {
+      fontSize = 16;
+    }
+  } else if (longestLine > 30) {
+    fontSize = 13;
+  } else if (longestLine > 26) {
+    fontSize = 16;
+  } else if (longestLine > 22) {
+    fontSize = 18;
+  }
 
   return {
     ...cardLayers.name,
+    fontSize: `${fontSize}px`,
+    lineHeight: lines.length > 1 ? 0.9 : 0.98
+  };
+}
+
+function previewGradeStyle(grade: string): CSSProperties {
+  const length = grade.length;
+  const fontSize = length > 28 ? 12 : length > 23 ? 13 : length > 18 ? 15 : 17;
+
+  return {
+    ...cardLayers.grade,
     fontSize: `${fontSize}px`
   };
+}
+
+function splitNameLines(name: string) {
+  const words = name.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  if (name.length <= 26 || words.length <= 1) {
+    return [name];
+  }
+
+  let bestIndex = 1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < words.length; index += 1) {
+    const first = words.slice(0, index).join(' ');
+    const second = words.slice(index).join(' ');
+    const score = Math.abs(first.length - second.length);
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return [words.slice(0, bestIndex).join(' '), words.slice(bestIndex).join(' ')];
 }
 
 function previewEmergencyNameStyle(name: string): CSSProperties {
@@ -602,7 +653,8 @@ function Field({
 function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
   const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : ''].filter(Boolean);
   const name = studentFullName(student);
-  const longName = name.length > 28;
+  const nameLines = splitNameLines(name);
+  const gradeLine = studentGradeLine(student);
 
   return (
     <div className="cards-wrap">
@@ -610,11 +662,16 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
         <CardPage background={FRONT_TEMPLATE}>
           {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
           <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
-          <div className={`layer name-layer${longName ? ' is-long' : ''}`} style={previewNameStyle(name)}>
-            {name}
+          <div className="layer student-no-layer" style={cardLayers.studentNo}>
+            {student.admissionNo}
           </div>
-          <div className="layer grade-layer" style={cardLayers.grade}>
-            {studentGradeLine(student)}
+          <div className="layer name-layer" style={previewNameStyle(name)}>
+            {nameLines.map((line) => (
+              <span key={line}>{line}</span>
+            ))}
+          </div>
+          <div className="layer grade-layer" style={previewGradeStyle(gradeLine)}>
+            {gradeLine}
           </div>
           {idLines.length ? (
             <div className="layer ids-layer" style={cardLayers.ids}>
