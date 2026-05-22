@@ -568,7 +568,9 @@ select {
 }
 
 .capture-modal {
-  width: min(1040px, 96vw);
+  width: min(1180px, 96vw);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   background: #fff;
   border-radius: 12px;
   padding: 20px;
@@ -606,8 +608,9 @@ select {
 
 .capture-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: minmax(360px, 1fr) 315px 260px;
   gap: 18px;
+  align-items: start;
 }
 
 .camera-box,
@@ -663,17 +666,61 @@ select {
 
 .crop-frame::after {
   content: "";
-  width: 280px;
-  height: 420px;
-  border: 2px solid var(--gold);
+  width: 320px;
+  height: 370px;
+  border: 2px solid rgba(215, 187, 69, .96);
   position: absolute;
   border-radius: 14px;
   pointer-events: none;
+  box-shadow: 0 0 0 999px rgba(20, 20, 19, .10);
 }
 
 .crop-frame img {
-  max-width: 72%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 320px;
+  height: 370px;
+  max-width: none;
+  object-fit: cover;
   transform-origin: center;
+}
+
+.crop-guide {
+  width: 320px;
+  height: 370px;
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.crop-head {
+  position: absolute;
+  left: 50%;
+  top: 9%;
+  width: 31%;
+  height: 34%;
+  transform: translateX(-50%);
+  border: 2px solid rgba(255, 255, 255, .82);
+  border-radius: 50%;
+}
+
+.crop-shoulders {
+  position: absolute;
+  left: 24%;
+  right: 24%;
+  top: 63%;
+  height: 2px;
+  background: rgba(255, 255, 255, .82);
+  border-radius: 999px;
+}
+
+.capture-id-preview {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .capture-controls {
@@ -697,6 +744,10 @@ select {
   }
 
   .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .capture-grid {
     grid-template-columns: 1fr;
   }
 

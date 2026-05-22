@@ -2,6 +2,7 @@ import {
   Camera,
   CheckCircle2,
   FileDown,
+  ImagePlus,
   LogIn,
   LogOut,
   Printer,
@@ -11,7 +12,7 @@ import {
   X
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, FormEvent } from 'react';
+import type { CSSProperties, ChangeEvent, FormEvent } from 'react';
 import type {
   GuardianContact,
   OperatorSession,
@@ -713,7 +714,9 @@ export default function App() {
 
       {captureOpen && selected ? (
         <CaptureModal
-          studentName={studentFullName(selected)}
+          student={previewStudent || selected}
+          qrDataUrl={qrDataUrl}
+          portalBaseUrl={portalSettings.baseUrl}
           onApprove={handleApprovePhoto}
           onClose={() => setCaptureOpen(false)}
         />
@@ -818,22 +821,36 @@ function CardPage({ background, children }: { background: string; children: Reac
   );
 }
 
+const PHOTO_OUTPUT_WIDTH = 860;
+const PHOTO_OUTPUT_HEIGHT = 996;
+const PHOTO_EDITOR_FRAME_WIDTH = 320;
+const PHOTO_EDITOR_FRAME_HEIGHT = 370;
+
 function CaptureModal({
-  studentName,
+  student,
+  qrDataUrl,
+  portalBaseUrl,
   onApprove,
   onClose
 }: {
-  studentName: string;
+  student: StudentRecord;
+  qrDataUrl: string;
+  portalBaseUrl: string;
   onApprove: (photoDataUrl: string) => void;
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState('');
+  const [cameraReady, setCameraReady] = useState(false);
   const [rawCapture, setRawCapture] = useState('');
-  const [zoom, setZoom] = useState(1.15);
+  const [editedPreview, setEditedPreview] = useState('');
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
+  const [brightness, setBrightness] = useState(100);
 
   useEffect(() => {
     let active = true;
@@ -852,17 +869,72 @@ function CaptureModal({
           return;
         }
         streamRef.current = stream;
+        setCameraReady(true);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
       })
-      .catch(() => setError('Camera is unavailable. Use manual upload in the production connector.'));
+      .catch(() => {
+        setCameraReady(false);
+        setError('Camera is unavailable. Choose Photo still works.');
+      });
 
     return () => {
       active = false;
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  useEffect(() => {
+    if (!rawCapture) {
+      setEditedPreview('');
+      setEditorBusy(false);
+      return;
+    }
+
+    let canceled = false;
+    setEditorBusy(true);
+    const timeout = window.setTimeout(() => {
+      renderCroppedPhoto(rawCapture, zoom, offsetX, offsetY, brightness)
+        .then((photo) => {
+          if (!canceled) {
+            setEditedPreview(photo);
+          }
+        })
+        .catch(() => {
+          if (!canceled) {
+            setError('Could not prepare this photo. Choose another image.');
+          }
+        })
+        .finally(() => {
+          if (!canceled) {
+            setEditorBusy(false);
+          }
+        });
+    }, 80);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [rawCapture, zoom, offsetX, offsetY, brightness]);
+
+  const previewStudent = useMemo(
+    () => ({
+      ...student,
+      photoUrl: editedPreview || rawCapture || student.photoUrl || ''
+    }),
+    [editedPreview, rawCapture, student]
+  );
+
+  function resetEditor(source: string) {
+    setRawCapture(source);
+    setEditedPreview('');
+    setZoom(1);
+    setOffsetX(0);
+    setOffsetY(0);
+    setBrightness(100);
+  }
 
   function captureFrame() {
     const video = videoRef.current;
@@ -878,14 +950,47 @@ function CaptureModal({
       return;
     }
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    setRawCapture(canvas.toDataURL('image/jpeg', 0.95));
+    resetEditor(canvas.toDataURL('image/jpeg', 0.95));
+  }
+
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setError('Choose an image file.');
+      return;
+    }
+
+    try {
+      resetEditor(await fileToDataUrl(file));
+      setError('');
+    } catch {
+      setError('Could not load this photo.');
+    }
+  }
+
+  async function useCurrentPhoto() {
+    if (!student.photoUrl) {
+      return;
+    }
+
+    try {
+      resetEditor(await imageSourceToDataUrl(student.photoUrl, portalBaseUrl));
+      setError('');
+    } catch {
+      setError('Could not load the current portal photo for editing. Choose Photo instead.');
+    }
   }
 
   async function approve() {
     if (!rawCapture) {
       return;
     }
-    const cropped = await renderCroppedPhoto(rawCapture, zoom, offsetX, offsetY);
+    const cropped = await renderCroppedPhoto(rawCapture, zoom, offsetX, offsetY, brightness);
     onApprove(cropped);
   }
 
@@ -894,8 +999,8 @@ function CaptureModal({
       <section className="capture-modal">
         <header>
           <div>
-            <h2>Capture Photo</h2>
-            <p>{studentName}</p>
+            <h2>Photo Editor</h2>
+            <p>{studentFullName(student)}</p>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close">
             <X size={18} />
@@ -910,9 +1015,14 @@ function CaptureModal({
                   src={rawCapture}
                   alt=""
                   style={{
-                    transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`
+                    filter: `brightness(${brightness}%)`,
+                    transform: `translate(-50%, -50%) translate(${offsetX}px, ${offsetY}px) scale(${zoom})`
                   }}
                 />
+                <div className="crop-guide">
+                  <div className="crop-head" />
+                  <div className="crop-shoulders" />
+                </div>
               </div>
             ) : (
               <div className="video-frame">
@@ -925,8 +1035,22 @@ function CaptureModal({
             )}
           </div>
 
+          <div className="capture-id-preview">
+            <CaptureFrontPreview student={previewStudent} qrDataUrl={qrDataUrl} />
+            <span>{editorBusy ? 'Preparing...' : 'ID Preview'}</span>
+          </div>
+
           <aside className="capture-controls">
             {error ? <div className="warning">{error}</div> : null}
+            <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleUpload} />
+            <button className="button secondary wide" onClick={() => fileInputRef.current?.click()}>
+              <ImagePlus size={17} /> Choose Photo
+            </button>
+            {student.photoUrl ? (
+              <button className="button secondary wide" onClick={useCurrentPhoto}>
+                <RefreshCw size={17} /> Edit Current Photo
+              </button>
+            ) : null}
             {rawCapture ? (
               <>
                 <label className="field">
@@ -960,15 +1084,25 @@ function CaptureModal({
                     onChange={(event) => setOffsetY(Number(event.target.value))}
                   />
                 </label>
+                <label className="field">
+                  <span>Brightness</span>
+                  <input
+                    type="range"
+                    min="70"
+                    max="130"
+                    value={brightness}
+                    onChange={(event) => setBrightness(Number(event.target.value))}
+                  />
+                </label>
                 <button className="button secondary wide" onClick={() => setRawCapture('')}>
                   <RefreshCw size={17} /> Retake
                 </button>
-                <button className="button primary wide" onClick={approve}>
-                  <CheckCircle2 size={17} /> Approve Photo
+                <button className="button primary wide" onClick={approve} disabled={editorBusy}>
+                  <CheckCircle2 size={17} /> Save Photo
                 </button>
               </>
             ) : (
-              <button className="button primary wide" onClick={captureFrame} disabled={Boolean(error)}>
+              <button className="button primary wide" onClick={captureFrame} disabled={!cameraReady}>
                 <Camera size={17} /> Capture
               </button>
             )}
@@ -979,10 +1113,43 @@ function CaptureModal({
   );
 }
 
-async function renderCroppedPhoto(source: string, zoom: number, offsetX: number, offsetY: number) {
+function CaptureFrontPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
+  const lastName = studentLastNameLine(student);
+  const firstName = studentFirstNameLine(student);
+  const gradeLine = studentGradeLine(student);
+  const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : ''].filter(Boolean);
+
+  return (
+    <CardPage background={FRONT_TEMPLATE}>
+      {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
+      <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
+      <div className="layer student-no-layer" style={cardLayers.studentNo}>
+        {student.admissionNo}
+      </div>
+      <div className="layer last-name-layer" style={previewLastNameStyle(lastName)}>
+        {lastName}
+      </div>
+      <div className="layer first-name-layer" style={previewFirstNameStyle(firstName)}>
+        {firstName}
+      </div>
+      <div className="layer grade-layer" style={previewGradeStyle(gradeLine)}>
+        {gradeLine}
+      </div>
+      {idLines.length ? (
+        <div className="layer ids-layer" style={cardLayers.ids}>
+          {idLines.map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </div>
+      ) : null}
+    </CardPage>
+  );
+}
+
+async function renderCroppedPhoto(source: string, zoom: number, offsetX: number, offsetY: number, brightness: number) {
   const image = await loadImage(source);
-  const outputWidth = 840;
-  const outputHeight = 1260;
+  const outputWidth = PHOTO_OUTPUT_WIDTH;
+  const outputHeight = PHOTO_OUTPUT_HEIGHT;
   const canvas = document.createElement('canvas');
   canvas.width = outputWidth;
   canvas.height = outputHeight;
@@ -994,16 +1161,60 @@ async function renderCroppedPhoto(source: string, zoom: number, offsetX: number,
 
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, outputWidth, outputHeight);
+  context.filter = `brightness(${brightness}%)`;
 
   const baseScale = Math.max(outputWidth / image.width, outputHeight / image.height);
   const scale = baseScale * zoom;
   const width = image.width * scale;
   const height = image.height * scale;
-  const x = (outputWidth - width) / 2 + offsetX * 2;
-  const y = (outputHeight - height) / 2 + offsetY * 2;
+  const x = (outputWidth - width) / 2 + offsetX * (outputWidth / PHOTO_EDITOR_FRAME_WIDTH);
+  const y = (outputHeight - height) / 2 + offsetY * (outputHeight / PHOTO_EDITOR_FRAME_HEIGHT);
 
   context.drawImage(image, x, y, width, height);
   return canvas.toDataURL('image/jpeg', 0.94);
+}
+
+function fileToDataUrl(file: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read image file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function imageSourceToDataUrl(source: string, portalBaseUrl: string) {
+  if (source.startsWith('data:')) {
+    return source;
+  }
+
+  const url = resolveImageSource(source, portalBaseUrl);
+  if (window.gtPrint?.fetchImageDataUrl) {
+    try {
+      return await window.gtPrint.fetchImageDataUrl(url);
+    } catch {
+      throw new Error('Could not download image through the desktop app.');
+    }
+  }
+
+  const response = await fetch(url, { credentials: 'include' });
+  if (!response.ok) {
+    throw new Error('Could not fetch image.');
+  }
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) {
+    throw new Error('Fetched file is not an image.');
+  }
+  return fileToDataUrl(blob);
+}
+
+function resolveImageSource(source: string, portalBaseUrl: string) {
+  if (/^https?:\/\//i.test(source)) {
+    return source;
+  }
+
+  const base = portalBaseUrl.trim() || window.location.href;
+  return new URL(source, base).toString();
 }
 
 function loadImage(source: string) {
