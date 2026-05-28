@@ -1,9 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
 import type { WebContentsPrintOptions } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { appendFile, readFile, unlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +11,12 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 const CR80_PAGE_SIZE = { width: 53980, height: 85600 };
+const pendingPrintJobs = new Map<string, string>();
+let printJobCounter = 0;
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'gtis-print', privileges: { standard: true, secure: true } }
+]);
 
 function logDiagnostic(message: string, details?: unknown) {
   const detailText = details === undefined ? '' : ` ${JSON.stringify(details)}`;
@@ -143,6 +148,32 @@ async function waitForPrintAssets(printWindow: BrowserWindow) {
   `);
 }
 
+async function verifyPrintRender(printWindow: BrowserWindow) {
+  return printWindow.webContents.executeJavaScript(`
+    (() => {
+      const pages = Array.from(document.querySelectorAll('.page'));
+      const firstPage = pages[0];
+      const bodyText = (document.body?.innerText || '').trim();
+      const bodyStart = bodyText.slice(0, 160);
+      const styleSheetCount = document.styleSheets ? document.styleSheets.length : 0;
+      const pagePosition = firstPage ? window.getComputedStyle(firstPage).position : '';
+      const pageWidth = firstPage ? window.getComputedStyle(firstPage).width : '';
+      const rawCssVisible = /^(GTIS ID Card\\s+\\S+\\s+)?(@page|\\*\\s*\\{|html\\s*,\\s*body\\s*\\{|\\.page\\s*\\{)/i.test(bodyStart);
+      const ok = pages.length === 2 && styleSheetCount > 0 && pagePosition === 'relative' && !rawCssVisible;
+
+      return {
+        ok,
+        pages: pages.length,
+        styleSheetCount,
+        pagePosition,
+        pageWidth,
+        rawCssVisible,
+        bodyStart
+      };
+    })()
+  `);
+}
+
 async function createPrintWindow(html: string, options: { visible?: boolean } = {}) {
   const visible = Boolean(options.visible);
   const printWindow = new BrowserWindow({
@@ -159,26 +190,36 @@ async function createPrintWindow(html: string, options: { visible?: boolean } = 
     }
   });
 
-  const tempPath = path.join(tmpdir(), `gtis-print-${Date.now()}.html`);
-  await writeFile(tempPath, html, 'utf-8');
   try {
-    await printWindow.loadFile(tempPath);
-  } finally {
-    unlink(tempPath).catch(() => undefined);
-  }
-  const assets = await waitForPrintAssets(printWindow);
-  await delay(250);
-
-  if (visible) {
-    printWindow.show();
-    printWindow.focus();
-    if (process.platform === 'darwin') {
-      app.focus({ steal: true });
+    const jobId = `job-${++printJobCounter}-${Date.now()}`;
+    pendingPrintJobs.set(jobId, html);
+    try {
+      await printWindow.loadURL(`gtis-print://${jobId}/card.html`);
+    } finally {
+      pendingPrintJobs.delete(jobId);
     }
-    await delay(300);
-  }
+    const assets = await waitForPrintAssets(printWindow);
+    const renderCheck = await verifyPrintRender(printWindow);
+    if (!renderCheck.ok) {
+      logDiagnostic('Print render sanity check failed.', renderCheck);
+      throw new Error('Print preview did not render as a styled ID card. Nothing was sent to the printer.');
+    }
+    await delay(250);
 
-  return { printWindow, assets };
+    if (visible) {
+      printWindow.show();
+      printWindow.focus();
+      if (process.platform === 'darwin') {
+        app.focus({ steal: true });
+      }
+      await delay(300);
+    }
+
+    return { printWindow, assets, renderCheck };
+  } catch (error) {
+    printWindow.destroy();
+    throw error;
+  }
 }
 
 ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
@@ -227,16 +268,21 @@ ipcMain.handle(
       printOptions.pageSize = CR80_PAGE_SIZE;
     }
 
-    const { printWindow, assets } = await createPrintWindow(html, { visible: !silent });
-    logDiagnostic('Print attempt started.', {
-      mode,
-      printerName,
-      pageSize: silent ? CR80_PAGE_SIZE : 'driver-default',
-      margins: silent ? 'none' : 'driver-default',
-      assets
-    });
+    let printWindow: BrowserWindow | null = null;
 
     try {
+      const printContext = await createPrintWindow(html, { visible: !silent });
+      printWindow = printContext.printWindow;
+      const readyPrintWindow = printContext.printWindow;
+      logDiagnostic('Print attempt started.', {
+        mode,
+        printerName,
+        pageSize: silent ? CR80_PAGE_SIZE : 'driver-default',
+        margins: silent ? 'none' : 'driver-default',
+        assets: printContext.assets,
+        renderCheck: printContext.renderCheck
+      });
+
       return await new Promise<{
         ok: boolean;
         error?: string;
@@ -245,7 +291,7 @@ ipcMain.handle(
         printerName: string;
         failureReason?: string;
       }>((resolve) => {
-        printWindow.webContents.print(
+        readyPrintWindow.webContents.print(
           printOptions,
           (success, failureReason) => {
             const canceled = /cancel/i.test(failureReason || '');
@@ -271,8 +317,16 @@ ipcMain.handle(
           }
         );
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logDiagnostic('Print attempt stopped before printer handoff.', {
+        mode,
+        printerName,
+        error: message
+      });
+      return { ok: false, mode, printerName, error: message || 'Print failed before the printer dialog opened.' };
     } finally {
-      printWindow.destroy();
+      printWindow?.destroy();
     }
   }
 );
@@ -381,7 +435,19 @@ function downloadImage(url: string, redirectCount = 0): Promise<ImageDownload> {
   });
 }
 
-app.whenReady().then(createMainWindow);
+app.whenReady().then(() => {
+  protocol.handle('gtis-print', (request) => {
+    const url = new URL(request.url);
+    const jobId = url.hostname;
+    const html = pendingPrintJobs.get(jobId);
+    if (!html) {
+      return new Response('Print job not found.', { status: 404, headers: { 'content-type': 'text/plain' } });
+    }
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+  });
+
+  createMainWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
