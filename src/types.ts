@@ -62,6 +62,9 @@ export interface PrintResult {
   error?: string;
   canceled?: boolean;
   filePath?: string;
+  mode?: 'dialog' | 'silent' | string;
+  printerName?: string;
+  failureReason?: string;
 }
 
 export interface PrintStationBridge {

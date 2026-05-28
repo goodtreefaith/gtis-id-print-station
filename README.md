@@ -30,14 +30,16 @@ npm run electron:dev
 Mac testing:
 
 - Use `Save PDF` to inspect exact CR80 output.
-- Use non-silent print mode to open the system print dialog.
+- Use normal print mode to open the system print dialog.
 - Webcam capture works through Electron camera permissions.
 
 Windows NUC target:
 
-- Install the SMART-51D driver.
+- Install the SMART-51D driver from the SMART-51/31/21 support download.
 - Configure the app printer dropdown to the SMART-51D printer name.
-- Turn on silent mode only after physical test prints confirm CR80 duplex behavior.
+- Leave `Silent print on Windows NUC` off for the first test prints.
+- Click `Print ID`, then use the SMART Windows print dialog to confirm ISO CR80/card size and front/back duplex settings.
+- Turn on silent mode only after dialog-mode physical test prints confirm the SMART driver settings are correct.
 
 ## Template Assets
 

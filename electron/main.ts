@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import type { WebContentsPrintOptions } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
@@ -9,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+const CR80_PAGE_SIZE = { width: 53980, height: 85600 };
 
 function logDiagnostic(message: string, details?: unknown) {
   const detailText = details === undefined ? '' : ` ${JSON.stringify(details)}`;
@@ -63,6 +65,10 @@ function mimeTypeFor(filePath: string) {
   return mimeTypes[extension] || 'application/octet-stream';
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -104,11 +110,47 @@ function createMainWindow() {
   }
 }
 
-async function createPrintWindow(html: string) {
+async function waitForPrintAssets(printWindow: BrowserWindow) {
+  return printWindow.webContents.executeJavaScript(`
+    (async () => {
+      const images = Array.from(document.images || []);
+      await Promise.all(images.map((image) => {
+        if (image.complete && image.naturalWidth > 0) {
+          return Promise.resolve();
+        }
+        if (image.complete) {
+          return Promise.resolve();
+        }
+
+        return new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        });
+      }));
+
+      if (document.fonts && document.fonts.ready) {
+        await document.fonts.ready;
+      }
+
+      return {
+        imageCount: images.length,
+        failedImages: images
+          .filter((image) => !image.complete || image.naturalWidth === 0)
+          .map((image) => image.currentSrc || image.src || '')
+      };
+    })()
+  `);
+}
+
+async function createPrintWindow(html: string, options: { visible?: boolean } = {}) {
+  const visible = Boolean(options.visible);
   const printWindow = new BrowserWindow({
     show: false,
-    width: 640,
-    height: 1024,
+    width: visible ? 520 : 640,
+    height: visible ? 820 : 1024,
+    title: visible ? 'GTIS ID Print Station - Print Preview' : 'GTIS ID Print Station',
+    backgroundColor: '#ffffff',
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -117,11 +159,19 @@ async function createPrintWindow(html: string) {
   });
 
   await printWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
-  await printWindow.webContents.executeJavaScript(
-    'document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()'
-  );
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  return printWindow;
+  const assets = await waitForPrintAssets(printWindow);
+  await delay(250);
+
+  if (visible) {
+    printWindow.show();
+    printWindow.focus();
+    if (process.platform === 'darwin') {
+      app.focus({ steal: true });
+    }
+    await delay(300);
+  }
+
+  return { printWindow, assets };
 }
 
 ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
@@ -153,23 +203,63 @@ registerPrinterHandlers();
 ipcMain.handle(
   'card:print',
   async (_event, html: string, options: { deviceName?: string; silent?: boolean }) => {
-    const printWindow = await createPrintWindow(html);
+    const silent = Boolean(options.silent);
+    const mode = silent ? 'silent' : 'dialog';
+    const printerName = options.deviceName || 'System default';
+    const printOptions: WebContentsPrintOptions = {
+      silent,
+      printBackground: true
+    };
+
+    if (options.deviceName) {
+      printOptions.deviceName = options.deviceName;
+    }
+
+    if (silent) {
+      printOptions.margins = { marginType: 'none' };
+      printOptions.pageSize = CR80_PAGE_SIZE;
+    }
+
+    const { printWindow, assets } = await createPrintWindow(html, { visible: !silent });
+    logDiagnostic('Print attempt started.', {
+      mode,
+      printerName,
+      pageSize: silent ? CR80_PAGE_SIZE : 'driver-default',
+      margins: silent ? 'none' : 'driver-default',
+      assets
+    });
 
     try {
-      return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      return await new Promise<{
+        ok: boolean;
+        error?: string;
+        canceled?: boolean;
+        mode: string;
+        printerName: string;
+        failureReason?: string;
+      }>((resolve) => {
         printWindow.webContents.print(
-          {
-            silent: Boolean(options.silent),
-            deviceName: options.deviceName || undefined,
-            printBackground: true,
-            margins: { marginType: 'none' },
-            pageSize: { width: 53980, height: 85600 }
-          },
+          printOptions,
           (success, failureReason) => {
+            const canceled = /cancel/i.test(failureReason || '');
+            logDiagnostic('Print attempt finished.', {
+              mode,
+              printerName,
+              success,
+              failureReason: failureReason || ''
+            });
+
             if (success) {
-              resolve({ ok: true });
+              resolve({ ok: true, mode, printerName });
             } else {
-              resolve({ ok: false, error: failureReason || 'Print failed.' });
+              resolve({
+                ok: false,
+                canceled,
+                mode,
+                printerName,
+                failureReason: failureReason || '',
+                error: canceled ? 'Print canceled.' : failureReason || 'Print failed.'
+              });
             }
           }
         );
@@ -181,7 +271,7 @@ ipcMain.handle(
 );
 
 ipcMain.handle('card:savePdf', async (_event, html: string) => {
-  const printWindow = await createPrintWindow(html);
+  const { printWindow } = await createPrintWindow(html);
 
   try {
     const result = await dialog.showSaveDialog({
@@ -197,7 +287,7 @@ ipcMain.handle('card:savePdf', async (_event, html: string) => {
     const pdf = await printWindow.webContents.printToPDF({
       printBackground: true,
       margins: { marginType: 'none' },
-      pageSize: { width: 53980, height: 85600 }
+      pageSize: CR80_PAGE_SIZE
     });
 
     await writeFile(result.filePath, pdf);

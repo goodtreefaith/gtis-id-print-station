@@ -278,8 +278,12 @@ export default function App() {
       publicAssetToDataUrl(BACK_TEMPLATE),
       optionalIdCardFontFaceCss()
     ]);
+    const studentForPrint = { ...previewStudent };
+    if (studentForPrint.photoUrl) {
+      studentForPrint.photoUrl = await imageSourceToDataUrl(studentForPrint.photoUrl, portalSettings.baseUrl);
+    }
 
-    return renderPrintHtml(previewStudent, qrDataUrl, { front, back, idCardFontFaceCss });
+    return renderPrintHtml(studentForPrint, qrDataUrl, { front, back, idCardFontFaceCss });
   }
 
   async function handleSaveGuardian() {
@@ -380,11 +384,17 @@ export default function App() {
     try {
       const html = await buildPrintHtml();
       if (window.gtPrint) {
+        setStatus(silentPrint ? 'Sending print job...' : 'Opening Windows print dialog...');
         const result = await window.gtPrint.printCard(html, {
           deviceName: selectedPrinter || undefined,
           silent: silentPrint
         });
-        setStatus(result.ok ? 'Print job sent.' : result.error || 'Print failed.');
+        if (result.ok) {
+          const printerName = result.printerName || selectedPrinter || 'selected printer';
+          setStatus(result.mode === 'dialog' ? `Print dialog completed for ${printerName}.` : `Print job sent to ${printerName}.`);
+        } else {
+          setStatus(result.error || 'Print failed.');
+        }
       } else {
         const printWindow = window.open('', '_blank', 'width=720,height=960');
         if (!printWindow) {
