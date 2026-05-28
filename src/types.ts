@@ -10,6 +10,11 @@ export interface StudentIdDetails {
   esc: string;
 }
 
+export interface StudentNameDetails {
+  firstName: string;
+  lastName: string;
+}
+
 export interface StudentRecord {
   id: string;
   admissionNo: string;
@@ -74,6 +79,7 @@ export interface PrintStationBridge {
     options: { deviceName?: string; silent?: boolean }
   ) => Promise<PrintResult>;
   saveCardPdf: (html: string) => Promise<PrintResult>;
+  captureCardPngs?: (html: string) => Promise<{ front: string; back: string; dpi: number }>;
   fetchImageDataUrl?: (url: string) => Promise<string>;
   readAssetDataUrl?: (assetPath: string) => Promise<string | null>;
 }

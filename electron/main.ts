@@ -11,6 +11,8 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 const CR80_PAGE_SIZE = { width: 53980, height: 85600 };
+const PRINT_CAPTURE_DPI = 300;
+const PRINT_CAPTURE_ZOOM = PRINT_CAPTURE_DPI / 96;
 const pendingPrintJobs = new Map<string, string>();
 let printJobCounter = 0;
 
@@ -222,6 +224,57 @@ async function createPrintWindow(html: string, options: { visible?: boolean } = 
   }
 }
 
+async function captureCardPngs(html: string) {
+  const { printWindow } = await createPrintWindow(html);
+
+  try {
+    printWindow.setContentSize(760, 2200);
+    printWindow.webContents.setZoomFactor(PRINT_CAPTURE_ZOOM);
+    await delay(350);
+
+    const pageBounds = await printWindow.webContents.executeJavaScript(`
+      (() => Array.from(document.querySelectorAll('.page')).map((page) => {
+        const rect = page.getBoundingClientRect();
+        return {
+          x: rect.x + window.scrollX,
+          y: rect.y + window.scrollY,
+          width: rect.width,
+          height: rect.height
+        };
+      }))()
+    `);
+
+    if (!Array.isArray(pageBounds) || pageBounds.length !== 2) {
+      throw new Error('Could not locate the front and back card pages for upload.');
+    }
+
+    const captures = await Promise.all(pageBounds.map(async (bounds, index) => {
+      const rect = {
+        x: Math.max(0, Math.floor(Number(bounds.x || 0) * PRINT_CAPTURE_ZOOM)),
+        y: Math.max(0, Math.floor(Number(bounds.y || 0) * PRINT_CAPTURE_ZOOM)),
+        width: Math.ceil(Number(bounds.width || 0) * PRINT_CAPTURE_ZOOM),
+        height: Math.ceil(Number(bounds.height || 0) * PRINT_CAPTURE_ZOOM)
+      };
+
+      const image = await printWindow.webContents.capturePage(rect);
+      const size = image.getSize();
+      if (size.width < 500 || size.height < 800) {
+        logDiagnostic('ID card PNG capture was smaller than expected.', { index, rect, size });
+      }
+
+      return image.toDataURL();
+    }));
+
+    return {
+      front: captures[0],
+      back: captures[1],
+      dpi: PRINT_CAPTURE_DPI
+    };
+  } finally {
+    printWindow.destroy();
+  }
+}
+
 ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
   const filePath = resolvePublicAsset(assetPath);
   let buffer: Buffer;
@@ -357,6 +410,8 @@ ipcMain.handle('card:savePdf', async (_event, html: string) => {
     printWindow.destroy();
   }
 });
+
+ipcMain.handle('card:capturePngs', async (_event, html: string) => captureCardPngs(html));
 
 ipcMain.handle('image:fetchDataUrl', async (_event, url: string) => {
   const image = await downloadImage(url);

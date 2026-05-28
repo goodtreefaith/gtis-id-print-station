@@ -19,6 +19,7 @@ import type {
   PortalSettings,
   PrinterInfo,
   StudentIdDetails,
+  StudentNameDetails,
   StudentRecord
 } from './types';
 import { publicAssetToDataUrl } from './lib/assets';
@@ -52,6 +53,8 @@ import {
   searchStudents,
   updateGuardian,
   updateIdDetails,
+  updateStudentName,
+  uploadIdCardDocuments,
   updatePhoto
 } from './lib/portalClient';
 
@@ -99,6 +102,7 @@ function previewEmergencyPhoneStyle(phone: string): CSSProperties {
 
 function printableStudent(
   student: StudentRecord,
+  nameDraft: StudentNameDetails | null,
   guardianDraft: GuardianContact | null,
   idDraft: StudentIdDetails | null,
   printFields: PrintFieldOptions
@@ -108,10 +112,16 @@ function printableStudent(
 
   return {
     ...student,
+    firstName: nameDraft ? cleanValue(nameDraft.firstName) || student.firstName : student.firstName,
+    lastName: nameDraft ? cleanValue(nameDraft.lastName) || student.lastName : student.lastName,
     guardian: guardianDraft || student.guardian,
     lrn: printFields.includeLrn ? lrn : '',
     esc: printFields.includeEsc ? esc : ''
   };
+}
+
+function cleanValue(value: string | undefined) {
+  return (value || '').replace(/\s+/g, ' ').trim();
 }
 
 function replaceStudent(list: StudentRecord[], updated: StudentRecord) {
@@ -132,6 +142,7 @@ export default function App() {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [refreshCount, setRefreshCount] = useState(0);
   const [qrDataUrl, setQrDataUrl] = useState('');
+  const [nameDraft, setNameDraft] = useState<StudentNameDetails | null>(null);
   const [guardianDraft, setGuardianDraft] = useState<GuardianContact | null>(null);
   const [idDraft, setIdDraft] = useState<StudentIdDetails | null>(null);
   const [printFields, setPrintFields] = useState<PrintFieldOptions>({ includeLrn: true, includeEsc: true });
@@ -218,11 +229,13 @@ export default function App() {
   useEffect(() => {
     if (!selected) {
       setQrDataUrl('');
+      setNameDraft(null);
       setGuardianDraft(null);
       setIdDraft(null);
       return;
     }
 
+    setNameDraft({ firstName: selected.firstName || '', lastName: selected.lastName || '' });
     setGuardianDraft(selected.guardian);
     setIdDraft({ lrn: selected.lrn || '', esc: selected.esc || '' });
     setPrintFields({ includeLrn: Boolean(selected.lrn), includeEsc: Boolean(selected.esc) });
@@ -254,8 +267,8 @@ export default function App() {
   }, [selected, qrDataUrl]);
 
   const previewStudent = useMemo(() => {
-    return selected ? printableStudent(selected, guardianDraft, idDraft, printFields) : null;
-  }, [selected, guardianDraft, idDraft, printFields]);
+    return selected ? printableStudent(selected, nameDraft, guardianDraft, idDraft, printFields) : null;
+  }, [selected, nameDraft, guardianDraft, idDraft, printFields]);
 
   const canPrint = Boolean(
     selected &&
@@ -268,8 +281,147 @@ export default function App() {
       readiness.cr80
   );
 
-  async function buildPrintHtml() {
-    if (!previewStudent || !qrDataUrl) {
+  function applyUpdatedStudent(updated: StudentRecord) {
+    setStudents((current) => replaceStudent(current, updated));
+    setSelected(updated);
+    return updated;
+  }
+
+  function hasDirtyNameDraft(student: StudentRecord) {
+    return Boolean(
+      nameDraft &&
+        (cleanValue(nameDraft.firstName) !== cleanValue(student.firstName) ||
+          cleanValue(nameDraft.lastName) !== cleanValue(student.lastName))
+    );
+  }
+
+  function hasDirtyGuardianDraft(student: StudentRecord) {
+    return Boolean(
+      guardianDraft &&
+        (cleanValue(guardianDraft.name) !== cleanValue(student.guardian.name) ||
+          cleanValue(guardianDraft.relation) !== cleanValue(student.guardian.relation) ||
+          cleanValue(guardianDraft.address) !== cleanValue(student.guardian.address) ||
+          cleanValue(guardianDraft.phone) !== cleanValue(student.guardian.phone))
+    );
+  }
+
+  function hasDirtyIdDraft(student: StudentRecord) {
+    return Boolean(
+      idDraft &&
+        (cleanValue(idDraft.lrn) !== cleanValue(student.lrn) ||
+          cleanValue(idDraft.esc) !== cleanValue(student.esc))
+    );
+  }
+
+  function hasDirtyEditableDrafts(student: StudentRecord) {
+    return hasDirtyNameDraft(student) || hasDirtyGuardianDraft(student) || hasDirtyIdDraft(student);
+  }
+
+  async function saveNameDraftToPortal(baseStudent: StudentRecord, quiet = false) {
+    if (!nameDraft) {
+      return baseStudent;
+    }
+
+    if (!operatorCanEditPortal) {
+      throw new Error('This account can print IDs but cannot update portal records.');
+    }
+
+    const nextName = {
+      firstName: cleanValue(nameDraft.firstName),
+      lastName: cleanValue(nameDraft.lastName)
+    };
+
+    if (!nextName.firstName || !nextName.lastName) {
+      throw new Error('First name and last name are required before printing.');
+    }
+
+    const updated = await updateStudentName(baseStudent.id, nextName, portalSettings, operatorSession?.token);
+    setNameDraft({ firstName: updated.firstName, lastName: updated.lastName });
+    applyUpdatedStudent(updated);
+    if (!quiet) {
+      setStatus(hasPortalConfig(portalSettings) ? 'Student name saved.' : 'Student name saved in sample data.');
+    }
+    return updated;
+  }
+
+  async function saveGuardianDraftToPortal(baseStudent: StudentRecord, quiet = false) {
+    if (!guardianDraft) {
+      return baseStudent;
+    }
+
+    if (!operatorCanEditPortal) {
+      throw new Error('This account can print IDs but cannot update portal records.');
+    }
+
+    const nextGuardian = {
+      name: cleanValue(guardianDraft.name),
+      relation: cleanValue(guardianDraft.relation),
+      address: cleanValue(guardianDraft.address),
+      phone: cleanValue(guardianDraft.phone)
+    };
+    const updated = await updateGuardian(baseStudent.id, nextGuardian, portalSettings, operatorSession?.token);
+    setGuardianDraft(updated.guardian);
+    applyUpdatedStudent(updated);
+    if (!quiet) {
+      setStatus(hasPortalConfig(portalSettings) ? 'Guardian contact saved.' : 'Guardian contact saved in sample data.');
+    }
+    return updated;
+  }
+
+  async function saveIdDraftToPortal(baseStudent: StudentRecord, quiet = false) {
+    if (!idDraft) {
+      return baseStudent;
+    }
+
+    if (!operatorCanEditPortal) {
+      throw new Error('This account can print IDs but cannot update portal records.');
+    }
+
+    const nextDetails = {
+      lrn: cleanValue(idDraft.lrn),
+      esc: cleanValue(idDraft.esc)
+    };
+    const updated = await updateIdDetails(baseStudent.id, nextDetails, portalSettings, operatorSession?.token);
+    setIdDraft({ lrn: updated.lrn || '', esc: updated.esc || '' });
+    setPrintFields((current) => ({
+      includeLrn: nextDetails.lrn ? current.includeLrn : false,
+      includeEsc: nextDetails.esc ? current.includeEsc : false
+    }));
+    applyUpdatedStudent(updated);
+    if (!quiet) {
+      setStatus(hasPortalConfig(portalSettings) ? 'Student identifiers saved.' : 'Student identifiers saved in sample data.');
+    }
+    return updated;
+  }
+
+  async function syncEditableDraftsBeforePrint() {
+    if (!selected) {
+      throw new Error('Select a student before printing.');
+    }
+
+    if (hasDirtyEditableDrafts(selected) && !operatorCanEditPortal) {
+      throw new Error('Save or discard edited fields before printing. This account cannot update portal records.');
+    }
+
+    let current = selected;
+    if (hasDirtyNameDraft(current)) {
+      current = await saveNameDraftToPortal(current, true);
+    }
+    if (hasDirtyGuardianDraft(current)) {
+      current = await saveGuardianDraftToPortal(current, true);
+    }
+    if (hasDirtyIdDraft(current)) {
+      current = await saveIdDraftToPortal(current, true);
+    }
+    return current;
+  }
+
+  async function buildPrintHtml(studentOverride?: StudentRecord | null) {
+    const studentToRender = studentOverride
+      ? printableStudent(studentOverride, nameDraft, guardianDraft, idDraft, printFields)
+      : previewStudent;
+
+    if (!studentToRender || !qrDataUrl) {
       throw new Error('Select a student before printing.');
     }
 
@@ -278,12 +430,32 @@ export default function App() {
       publicAssetToDataUrl(BACK_TEMPLATE),
       optionalIdCardFontFaceCss()
     ]);
-    const studentForPrint = { ...previewStudent };
+    const studentForPrint = { ...studentToRender };
     if (studentForPrint.photoUrl) {
       studentForPrint.photoUrl = await imageSourceToDataUrl(studentForPrint.photoUrl, portalSettings.baseUrl);
     }
 
     return renderPrintHtml(studentForPrint, qrDataUrl, { front, back, idCardFontFaceCss });
+  }
+
+  async function handleSaveName() {
+    if (!selected || !nameDraft) {
+      return;
+    }
+
+    if (!operatorCanEditPortal) {
+      setStatus('This account can print IDs but cannot update portal records.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await saveNameDraftToPortal(selected);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not save student name.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleSaveGuardian() {
@@ -298,10 +470,7 @@ export default function App() {
 
     setBusy(true);
     try {
-      const updated = await updateGuardian(selected.id, guardianDraft, portalSettings, operatorSession?.token);
-      setStudents((current) => replaceStudent(current, updated));
-      setSelected(updated);
-      setStatus(hasPortalConfig(portalSettings) ? 'Guardian contact saved.' : 'Guardian contact saved in sample data.');
+      await saveGuardianDraftToPortal(selected);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not save guardian contact.');
     } finally {
@@ -321,18 +490,7 @@ export default function App() {
 
     setBusy(true);
     try {
-      const nextDetails = {
-        lrn: idDraft.lrn.trim(),
-        esc: idDraft.esc.trim()
-      };
-      const updated = await updateIdDetails(selected.id, nextDetails, portalSettings, operatorSession?.token);
-      setStudents((current) => replaceStudent(current, updated));
-      setSelected(updated);
-      setPrintFields((current) => ({
-        includeLrn: nextDetails.lrn ? current.includeLrn : false,
-        includeEsc: nextDetails.esc ? current.includeEsc : false
-      }));
-      setStatus(hasPortalConfig(portalSettings) ? 'Student identifiers saved.' : 'Student identifiers saved in sample data.');
+      await saveIdDraftToPortal(selected);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not save student identifiers.');
     } finally {
@@ -382,7 +540,9 @@ export default function App() {
 
     setBusy(true);
     try {
-      const html = await buildPrintHtml();
+      setStatus('Checking edited fields...');
+      const syncedStudent = await syncEditableDraftsBeforePrint();
+      const html = await buildPrintHtml(syncedStudent);
       if (window.gtPrint) {
         setStatus(silentPrint ? 'Sending print job...' : 'Opening Windows print dialog...');
         const result = await window.gtPrint.printCard(html, {
@@ -391,7 +551,28 @@ export default function App() {
         });
         if (result.ok) {
           const printerName = result.printerName || selectedPrinter || 'selected printer';
-          setStatus(result.mode === 'dialog' ? `Print dialog completed for ${printerName}.` : `Print job sent to ${printerName}.`);
+          const printStatus = result.mode === 'dialog' ? `Print dialog completed for ${printerName}.` : `Print job sent to ${printerName}.`;
+          if (hasPortalConfig(portalSettings)) {
+            try {
+              if (!window.gtPrint.captureCardPngs) {
+                throw new Error('This app version cannot capture the printed ID for upload.');
+              }
+              setStatus(`${printStatus} Uploading ID front/back to Documents...`);
+              const images = await window.gtPrint.captureCardPngs(html);
+              await uploadIdCardDocuments(
+                syncedStudent.id,
+                { front: images.front, back: images.back },
+                portalSettings,
+                operatorSession?.token
+              );
+              setStatus(`${printStatus} ID front/back uploaded to student Documents.`);
+            } catch (uploadError) {
+              const message = uploadError instanceof Error ? uploadError.message : 'Document upload failed.';
+              setStatus(`${printStatus} Document upload failed: ${message}`);
+            }
+          } else {
+            setStatus(printStatus);
+          }
         } else {
           setStatus(result.error || 'Print failed.');
         }
@@ -605,7 +786,7 @@ export default function App() {
           </section>
 
           <aside className="control-panel">
-            {selected && readiness && guardianDraft && idDraft ? (
+            {selected && readiness && nameDraft && guardianDraft && idDraft ? (
               <>
                 <section className="panel-section">
                   <h2>Readiness</h2>
@@ -632,6 +813,23 @@ export default function App() {
                       <Camera size={17} /> Capture Photo
                     </button>
                   </div>
+                </section>
+
+                <section className="panel-section">
+                  <h2>Student Name</h2>
+                  <Field
+                    label="First Name"
+                    value={nameDraft.firstName}
+                    onChange={(value) => setNameDraft({ ...nameDraft, firstName: value })}
+                  />
+                  <Field
+                    label="Last Name"
+                    value={nameDraft.lastName}
+                    onChange={(value) => setNameDraft({ ...nameDraft, lastName: value })}
+                  />
+                  <button className="button secondary wide" onClick={handleSaveName} disabled={busy || !operatorCanEditPortal}>
+                    <Save size={17} /> Save Student Name
+                  </button>
                 </section>
 
                 <section className="panel-section">

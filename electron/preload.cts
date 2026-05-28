@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('gtPrint', {
   printCard: (html: string, options: { deviceName?: string; silent?: boolean }) =>
     ipcRenderer.invoke('card:print', html, options),
   saveCardPdf: (html: string) => ipcRenderer.invoke('card:savePdf', html),
+  captureCardPngs: (html: string) => ipcRenderer.invoke('card:capturePngs', html),
   fetchImageDataUrl: (url: string) => ipcRenderer.invoke('image:fetchDataUrl', url),
   readAssetDataUrl: (assetPath: string) => ipcRenderer.invoke('asset:readDataUrl', assetPath)
 });

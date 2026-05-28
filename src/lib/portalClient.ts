@@ -4,6 +4,7 @@ import type {
   OperatorSession,
   PortalSettings,
   StudentIdDetails,
+  StudentNameDetails,
   StudentRecord,
   StudentSearchResult
 } from '../types';
@@ -170,6 +171,35 @@ export async function updateGuardian(
   return requireStudent(studentId);
 }
 
+export async function updateStudentName(
+  studentId: string,
+  name: StudentNameDetails,
+  settings: PortalSettings,
+  operatorToken?: string
+): Promise<StudentRecord> {
+  if (hasPortalConfig(settings)) {
+    const response = await portalFetch<{ student: PortalStudent }>(
+      settings,
+      `/idprintapi/students/${encodeURIComponent(studentId)}/name`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          firstname: name.firstName,
+          lastname: name.lastName
+        })
+      },
+      operatorToken
+    );
+
+    return mapPortalStudent(response.student);
+  }
+
+  students = students.map((student) =>
+    student.id === studentId ? { ...student, firstName: name.firstName, lastName: name.lastName } : student
+  );
+  return requireStudent(studentId);
+}
+
 export async function updateIdDetails(
   studentId: string,
   idDetails: StudentIdDetails,
@@ -223,6 +253,30 @@ export async function updatePhoto(
     student.id === studentId ? { ...student, photoUrl } : student
   );
   return requireStudent(studentId);
+}
+
+export async function uploadIdCardDocuments(
+  studentId: string,
+  images: { front: string; back: string },
+  settings: PortalSettings,
+  operatorToken?: string
+) {
+  if (!hasPortalConfig(settings)) {
+    return { documents: [] };
+  }
+
+  return portalFetch<{ documents: Array<Record<string, unknown>> }>(
+    settings,
+    `/idprintapi/students/${encodeURIComponent(studentId)}/id-card-documents`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        front_png_data_url: images.front,
+        back_png_data_url: images.back
+      })
+    },
+    operatorToken
+  );
 }
 
 async function searchMockStudents(query: string, page: number, limit: number): Promise<StudentSearchResult> {
