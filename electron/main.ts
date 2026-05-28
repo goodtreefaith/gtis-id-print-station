@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import type { WebContentsPrintOptions } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -158,7 +159,13 @@ async function createPrintWindow(html: string, options: { visible?: boolean } = 
     }
   });
 
-  await printWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`);
+  const tempPath = path.join(tmpdir(), `gtis-print-${Date.now()}.html`);
+  await writeFile(tempPath, html, 'utf-8');
+  try {
+    await printWindow.loadFile(tempPath);
+  } finally {
+    unlink(tempPath).catch(() => undefined);
+  }
   const assets = await waitForPrintAssets(printWindow);
   await delay(250);
 
