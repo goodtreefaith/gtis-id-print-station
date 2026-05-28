@@ -1,6 +1,6 @@
 {
   "name": "gtis-id-print-station",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "GTIS student ID card preview, photo capture, QR generation, and CR80 printing station.",
   "main": "dist-electron/main.js",

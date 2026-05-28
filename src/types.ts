@@ -72,6 +72,7 @@ export interface PrintStationBridge {
   ) => Promise<PrintResult>;
   saveCardPdf: (html: string) => Promise<PrintResult>;
   fetchImageDataUrl?: (url: string) => Promise<string>;
+  readAssetDataUrl?: (assetPath: string) => Promise<string | null>;
 }
 
 declare global {

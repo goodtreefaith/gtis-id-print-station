@@ -21,7 +21,7 @@ import type {
   StudentIdDetails,
   StudentRecord
 } from './types';
-import { assetToDataUrl } from './lib/assets';
+import { publicAssetToDataUrl } from './lib/assets';
 import {
   emergencyAddressFontPx,
   emergencyNameFontPx,
@@ -55,8 +55,8 @@ import {
   updatePhoto
 } from './lib/portalClient';
 
-const FRONT_TEMPLATE = '/templates/2026-2027/front.clean-2026.svg';
-const BACK_TEMPLATE = '/templates/2026-2027/back.canva.svg';
+const FRONT_TEMPLATE = 'templates/2026-2027/front.clean-2026.svg';
+const BACK_TEMPLATE = 'templates/2026-2027/back.canva.svg';
 const STUDENT_PAGE_LIMIT = 20;
 
 interface PrintFieldOptions {
@@ -274,8 +274,8 @@ export default function App() {
     }
 
     const [front, back, idCardFontFaceCss] = await Promise.all([
-      assetToDataUrl(new URL(FRONT_TEMPLATE, window.location.href).toString()),
-      assetToDataUrl(new URL(BACK_TEMPLATE, window.location.href).toString()),
+      publicAssetToDataUrl(FRONT_TEMPLATE),
+      publicAssetToDataUrl(BACK_TEMPLATE),
       optionalIdCardFontFaceCss()
     ]);
 

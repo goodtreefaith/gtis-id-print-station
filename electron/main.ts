@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { writeFile } from 'node:fs/promises';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +9,59 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+
+function logDiagnostic(message: string, details?: unknown) {
+  const detailText = details === undefined ? '' : ` ${JSON.stringify(details)}`;
+  const line = `[${new Date().toISOString()}] ${message}${detailText}`;
+  console.error(line);
+
+  if (app.isReady()) {
+    void appendFile(path.join(app.getPath('userData'), 'diagnostics.log'), `${line}\n`).catch(() => undefined);
+  }
+}
+
+function publicAssetRoot() {
+  if (process.env.VITE_DEV_SERVER_URL) {
+    return path.join(app.getAppPath(), 'public');
+  }
+
+  return path.join(__dirname, '../dist');
+}
+
+function resolvePublicAsset(assetPath: string) {
+  if (typeof assetPath !== 'string' || assetPath.trim() === '') {
+    throw new Error('Asset path is required.');
+  }
+
+  const normalizedPath = assetPath.replace(/^[/\\]+/, '');
+  const root = path.resolve(publicAssetRoot());
+  const resolved = path.resolve(root, normalizedPath);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error('Asset path is outside the bundled app assets.');
+  }
+
+  return resolved;
+}
+
+function mimeTypeFor(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    '.css': 'text/css',
+    '.gif': 'image/gif',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.js': 'text/javascript',
+    '.otf': 'font/otf',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.ttf': 'font/ttf',
+    '.webp': 'image/webp',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2'
+  };
+
+  return mimeTypes[extension] || 'application/octet-stream';
+}
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -25,11 +78,29 @@ function createMainWindow() {
     }
   });
 
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    logDiagnostic('Renderer load failed.', { errorCode, errorDescription, validatedURL });
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logDiagnostic('Renderer process ended.', details);
+  });
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      logDiagnostic('Renderer console message.', { level, message, line, sourceId });
+    }
+  });
+
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) {
-    void mainWindow.loadURL(devUrl);
-  } else {
-    void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  const loadPromise = devUrl
+    ? mainWindow.loadURL(devUrl)
+    : mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+
+  void loadPromise.catch((error) => {
+    logDiagnostic('Main window failed to load.', { message: error instanceof Error ? error.message : String(error) });
+  });
+
+  if (process.env.GTIS_ID_PRINT_DEBUG === '1') {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 }
 
@@ -53,12 +124,31 @@ async function createPrintWindow(html: string) {
   return printWindow;
 }
 
-ipcMain.handle('printers:list', async () => {
-  if (!mainWindow) {
-    return [];
+ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
+  const filePath = resolvePublicAsset(assetPath);
+  let buffer: Buffer;
+  try {
+    buffer = await readFile(filePath);
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
   }
-  return mainWindow.webContents.getPrintersAsync();
+
+  return `data:${mimeTypeFor(filePath)};base64,${buffer.toString('base64')}`;
 });
+
+function registerPrinterHandlers() {
+  ipcMain.handle('printers:list', async () => {
+    if (!mainWindow) {
+      return [];
+    }
+    return mainWindow.webContents.getPrintersAsync();
+  });
+}
+
+registerPrinterHandlers();
 
 ipcMain.handle(
   'card:print',

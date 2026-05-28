@@ -1,3 +1,5 @@
+import { publicAssetToDataUrl } from './assets';
+
 export const ID_CARD_FONT_FACE = 'GTIS Avenir Bold';
 export const ID_CARD_FONT_STACK =
   `"${ID_CARD_FONT_FACE}", "Avenir Next", Avenir, Arial, sans-serif`;
@@ -11,29 +13,11 @@ const OPTIONAL_FONT_FILES = [
 let fontDataPromise: Promise<{ dataUrl: string; format: string } | null> | null = null;
 let browserFontPromise: Promise<boolean> | null = null;
 
-function assetUrl(path: string) {
-  return new URL(path, window.location.href).toString();
-}
-
-async function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 async function loadOptionalFontData() {
   for (const file of OPTIONAL_FONT_FILES) {
     try {
-      const response = await fetch(assetUrl(file.path), { cache: 'force-cache' });
-      if (!response.ok) {
-        continue;
-      }
-
       return {
-        dataUrl: await blobToDataUrl(await response.blob()),
+        dataUrl: await publicAssetToDataUrl(file.path),
         format: file.format
       };
     } catch {

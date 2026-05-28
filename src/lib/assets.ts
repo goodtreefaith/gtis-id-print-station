@@ -1,5 +1,9 @@
 const cache = new Map<string, string>();
 
+function normalizePublicAssetPath(assetPath: string) {
+  return assetPath.replace(/^[/\\]+/, '');
+}
+
 export async function assetToDataUrl(url: string) {
   if (cache.has(url)) {
     return cache.get(url)!;
@@ -19,5 +23,26 @@ export async function assetToDataUrl(url: string) {
   });
 
   cache.set(url, dataUrl);
+  return dataUrl;
+}
+
+export async function publicAssetToDataUrl(assetPath: string) {
+  const normalizedPath = normalizePublicAssetPath(assetPath);
+  const cacheKey = `public:${normalizedPath}`;
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey)!;
+  }
+
+  if (window.gtPrint?.readAssetDataUrl) {
+    const dataUrl = await window.gtPrint.readAssetDataUrl(normalizedPath);
+    if (!dataUrl) {
+      throw new Error(`Could not load asset: ${normalizedPath}`);
+    }
+    cache.set(cacheKey, dataUrl);
+    return dataUrl;
+  }
+
+  const dataUrl = await assetToDataUrl(new URL(normalizedPath, window.location.href).toString());
+  cache.set(cacheKey, dataUrl);
   return dataUrl;
 }
