@@ -415,7 +415,7 @@ select {
 }
 
 .ids-layer {
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.04;
   white-space: nowrap;
   overflow: hidden;

@@ -10,7 +10,7 @@ import {
 } from './cardText';
 import { ID_CARD_FONT_STACK } from './fonts';
 import { cardLayers } from './layout';
-import { studentFirstNameLine, studentGradeLine, studentLastNameLine } from './student';
+import { studentFirstNameLine, studentGradeLine, studentIdentifierLines, studentLastNameLine } from './student';
 import type { CSSProperties } from 'react';
 
 function pos(style: CSSProperties) {
@@ -60,8 +60,7 @@ export function renderPrintHtml(
   const lastName = studentLastNameLine(student);
   const firstName = studentFirstNameLine(student);
   const gradeLine = studentGradeLine(student);
-  const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : '']
-    .filter(Boolean)
+  const idLines = studentIdentifierLines(student)
     .map((line) => `<div>${escapeHtml(line)}</div>`)
     .join('');
 
@@ -81,14 +80,13 @@ export function renderPrintHtml(
     .layer { position: absolute; z-index: 2; }
     .photo { object-fit: cover; border-radius: 2.05mm; }
     .qr { background: #fff; }
-    .student-no, .last-name, .first-name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 700; }
-    .student-no, .last-name, .first-name, .ids { color: #00692e; }
-    .student-no, .last-name, .first-name, .grade { text-align: center; }
-    .student-no { font-size: 2.5mm; line-height: 1; white-space: nowrap; }
+    .last-name, .first-name, .grade, .ids, .emergency { font-family: ${ID_CARD_FONT_STACK}; font-weight: 700; }
+    .last-name, .first-name, .ids { color: #00692e; }
+    .last-name, .first-name, .grade { text-align: center; }
     .last-name { font-size: ${lastNameFontMm(lastName)}; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .first-name { font-size: ${firstNameFontMm(firstName)}; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .grade { color: #fff; font-size: ${gradeFontMm(gradeLine)}; line-height: 1.05; white-space: nowrap; display: flex; align-items: center; justify-content: center; padding: 0 .7mm; overflow: hidden; }
-    .ids { font-size: 2.2mm; line-height: 1.04; white-space: nowrap; overflow: hidden; }
+    .ids { font-size: 2.14mm; line-height: 1.04; white-space: nowrap; overflow: hidden; }
     .emergency { color: #063f23; display: grid; grid-template-rows: auto auto auto; gap: 1mm; align-content: center; justify-items: center; text-align: center; padding: 0 1.7mm; }
     .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
     .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.02; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
@@ -100,7 +98,6 @@ export function renderPrintHtml(
     <img class="bg" src="${assets.front}" />
     ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
     <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
-    <div class="layer student-no" style="${pos(cardLayers.studentNo)}">${escapeHtml(student.admissionNo)}</div>
     <div class="layer last-name" style="${pos(cardLayers.lastName)}">${escapeHtml(lastName)}</div>
     <div class="layer first-name" style="${pos(cardLayers.firstName)}">${escapeHtml(firstName)}</div>
     <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(gradeLine)}</div>

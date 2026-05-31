@@ -14,11 +14,10 @@ export function layerStyle(x: number, y: number, width: number, height?: number)
 
 export const cardLayers = {
   photo: layerStyle(178, 247, 287, 332),
-  qr: layerStyle(375, 804, 171, 171),
-  studentNo: layerStyle(375, 775, 171, 26),
+  qr: layerStyle(346, 768, 240, 240),
   lastName: layerStyle(66, 583, 507, 63),
   firstName: layerStyle(66, 645, 507, 48),
   grade: layerStyle(66, 695, 507, 70),
-  ids: layerStyle(74, 828, 270, 58),
+  ids: layerStyle(56, 815, 286, 75),
   emergency: layerStyle(76, 400, 490, 165)
 };

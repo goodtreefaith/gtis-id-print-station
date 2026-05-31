@@ -20,6 +20,14 @@ export function studentGradeLine(student: StudentRecord) {
   return [student.grade, student.section].filter(Boolean).join(' - ');
 }
 
+export function studentIdentifierLines(student: StudentRecord) {
+  return [
+    student.lrn ? `LRN: ${student.lrn}` : '',
+    student.esc ? `ESC: ${student.esc}` : '',
+    `Stud No: ${student.admissionNo}`
+  ].filter(Boolean);
+}
+
 export function readinessFor(student: StudentRecord, qrReady: boolean) {
   return {
     enrolled: true,

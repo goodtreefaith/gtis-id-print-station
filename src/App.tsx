@@ -40,6 +40,7 @@ import {
   studentFirstNameLine,
   studentFullName,
   studentGradeLine,
+  studentIdentifierLines,
   studentLastNameLine
 } from './lib/student';
 import {
@@ -972,7 +973,7 @@ function Field({
 }
 
 function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
-  const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : ''].filter(Boolean);
+  const idLines = studentIdentifierLines(student);
   const lastName = studentLastNameLine(student);
   const firstName = studentFirstNameLine(student);
   const gradeLine = studentGradeLine(student);
@@ -983,9 +984,6 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
         <CardPage background={FRONT_TEMPLATE}>
           {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
           <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
-          <div className="layer student-no-layer" style={cardLayers.studentNo}>
-            {student.admissionNo}
-          </div>
           <div className="layer last-name-layer" style={previewLastNameStyle(lastName)}>
             {lastName}
           </div>
@@ -1325,15 +1323,12 @@ function CaptureFrontPreview({ student, qrDataUrl }: { student: StudentRecord; q
   const lastName = studentLastNameLine(student);
   const firstName = studentFirstNameLine(student);
   const gradeLine = studentGradeLine(student);
-  const idLines = [student.lrn ? `LRN: ${student.lrn}` : '', student.esc ? `ESC: ${student.esc}` : ''].filter(Boolean);
+  const idLines = studentIdentifierLines(student);
 
   return (
     <CardPage background={FRONT_TEMPLATE}>
       {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
       <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
-      <div className="layer student-no-layer" style={cardLayers.studentNo}>
-        {student.admissionNo}
-      </div>
       <div className="layer last-name-layer" style={previewLastNameStyle(lastName)}>
         {lastName}
       </div>
