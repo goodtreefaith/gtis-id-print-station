@@ -76,6 +76,8 @@ export function renderPrintHtml(
     html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvetica, sans-serif; }
     .page { width: 53.98mm; height: 85.60mm; position: relative; overflow: hidden; page-break-after: always; }
     .page:last-child { page-break-after: auto; }
+    .page-content { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .rotate-180 { transform: rotate(180deg); transform-origin: center; }
     .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .layer { position: absolute; z-index: 2; }
     .photo { object-fit: cover; border-radius: 2.05mm; }
@@ -95,20 +97,24 @@ export function renderPrintHtml(
 </head>
 <body>
   <section class="page">
-    <img class="bg" src="${assets.front}" />
-    ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
-    <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
-    <div class="layer last-name" style="${pos(cardLayers.lastName)}">${escapeHtml(lastName)}</div>
-    <div class="layer first-name" style="${pos(cardLayers.firstName)}">${escapeHtml(firstName)}</div>
-    <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(gradeLine)}</div>
-    ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}
+    <div class="page-content">
+      <img class="bg" src="${assets.front}" />
+      ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
+      <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
+      <div class="layer last-name" style="${pos(cardLayers.lastName)}">${escapeHtml(lastName)}</div>
+      <div class="layer first-name" style="${pos(cardLayers.firstName)}">${escapeHtml(firstName)}</div>
+      <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(gradeLine)}</div>
+      ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}
+    </div>
   </section>
   <section class="page">
-    <img class="bg" src="${assets.back}" />
-    <div class="layer emergency" style="${pos(cardLayers.emergency)}">
-      <div class="emergency-name">${escapeHtml(student.guardian.name)}</div>
-      <div class="emergency-address">${escapeHtml(student.guardian.address)}</div>
-      <div class="emergency-phone">${escapeHtml(student.guardian.phone)}</div>
+    <div class="page-content rotate-180">
+      <img class="bg" src="${assets.back}" />
+      <div class="layer emergency" style="${pos(cardLayers.emergency)}">
+        <div class="emergency-name">${escapeHtml(student.guardian.name)}</div>
+        <div class="emergency-address">${escapeHtml(student.guardian.address)}</div>
+        <div class="emergency-phone">${escapeHtml(student.guardian.phone)}</div>
+      </div>
     </div>
   </section>
 </body>

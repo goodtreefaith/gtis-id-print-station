@@ -1005,7 +1005,7 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
       </div>
 
       <div className="card-shell">
-        <CardPage background={BACK_TEMPLATE}>
+        <CardPage background={BACK_TEMPLATE} rotated>
           <div className="layer emergency-layer" style={cardLayers.emergency}>
             <strong style={previewEmergencyNameStyle(student.guardian.name)}>{student.guardian.name}</strong>
             <span style={previewEmergencyAddressStyle(student.guardian.address)}>{student.guardian.address}</span>
@@ -1018,11 +1018,13 @@ function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl
   );
 }
 
-function CardPage({ background, children }: { background: string; children: React.ReactNode }) {
+function CardPage({ background, children, rotated = false }: { background: string; children: React.ReactNode; rotated?: boolean }) {
   return (
     <div className="card-page">
-      <img src={background} className="card-bg" alt="" />
-      {children}
+      <div className={`card-content${rotated ? ' card-content-rotated' : ''}`}>
+        <img src={background} className="card-bg" alt="" />
+        {children}
+      </div>
     </div>
   );
 }
