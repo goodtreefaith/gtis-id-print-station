@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen } from 'electron';
 import type { WebContentsPrintOptions } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -11,8 +11,11 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 const CR80_PAGE_SIZE = { width: 53980, height: 85600 };
-const PRINT_CAPTURE_DPI = 300;
-const PRINT_CAPTURE_ZOOM = PRINT_CAPTURE_DPI / 96;
+const PRINT_CAPTURE_DPI = 600;
+const CR80_CAPTURE_SIZE = {
+  width: Math.round((53.98 / 25.4) * PRINT_CAPTURE_DPI),
+  height: Math.round((85.6 / 25.4) * PRINT_CAPTURE_DPI)
+};
 const pendingPrintJobs = new Map<string, string>();
 let printJobCounter = 0;
 
@@ -228,8 +231,9 @@ async function captureCardPngs(html: string) {
   const { printWindow } = await createPrintWindow(html);
 
   try {
-    printWindow.setContentSize(760, 2200);
-    printWindow.webContents.setZoomFactor(PRINT_CAPTURE_ZOOM);
+    const displayScaleFactor = screen.getDisplayMatching(printWindow.getBounds()).scaleFactor || 1;
+    const captureZoom = PRINT_CAPTURE_DPI / (96 * displayScaleFactor);
+    printWindow.webContents.setZoomFactor(captureZoom);
     await delay(350);
 
     const pageBounds = await printWindow.webContents.executeJavaScript(`
@@ -248,18 +252,25 @@ async function captureCardPngs(html: string) {
       throw new Error('Could not locate the front and back card pages for upload.');
     }
 
-    const captures = await Promise.all(pageBounds.map(async (bounds, index) => {
-      const rect = {
-        x: Math.max(0, Math.floor(Number(bounds.x || 0) * PRINT_CAPTURE_ZOOM)),
-        y: Math.max(0, Math.floor(Number(bounds.y || 0) * PRINT_CAPTURE_ZOOM)),
-        width: Math.ceil(Number(bounds.width || 0) * PRINT_CAPTURE_ZOOM),
-        height: Math.ceil(Number(bounds.height || 0) * PRINT_CAPTURE_ZOOM)
-      };
+    const captureRects = pageBounds.map((bounds) => ({
+      x: Math.max(0, Math.floor(Number(bounds.x || 0) * captureZoom)),
+      y: Math.max(0, Math.floor(Number(bounds.y || 0) * captureZoom)),
+      width: Math.ceil(Number(bounds.width || 0) * captureZoom),
+      height: Math.ceil(Number(bounds.height || 0) * captureZoom)
+    }));
+    printWindow.setContentSize(
+      Math.max(...captureRects.map((rect) => rect.x + rect.width)),
+      Math.max(...captureRects.map((rect) => rect.y + rect.height))
+    );
+    await delay(250);
+
+    const captures = await Promise.all(captureRects.map(async (rect, index) => {
 
       const image = await printWindow.webContents.capturePage(rect);
       const size = image.getSize();
-      if (size.width < 500 || size.height < 800) {
-        logDiagnostic('ID card PNG capture was smaller than expected.', { index, rect, size });
+      if (size.width < CR80_CAPTURE_SIZE.width || size.height < CR80_CAPTURE_SIZE.height) {
+        logDiagnostic('ID card PNG capture was smaller than 600 DPI.', { index, rect, size, expected: CR80_CAPTURE_SIZE });
+        throw new Error('The ID card archive image was not captured at full quality. Nothing was uploaded.');
       }
 
       return image.toDataURL();
