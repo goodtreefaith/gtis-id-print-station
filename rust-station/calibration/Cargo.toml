@@ -1,0 +1,12 @@
+[package]
+name = "id-card-calibration"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+publish = false
+
+[dependencies]
+flate2 = "1"
+pdf-writer = "0.15"
+png = "0.18"
+resvg = { version = "0.47", default-features = false }

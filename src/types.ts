@@ -104,6 +104,8 @@ export interface PortalBridge {
 }
 
 export interface PrintStationBridge {
+  /** The desktop host allows sample card previews but cannot print or export PDFs. */
+  previewOnly?: boolean;
   listPrinters: () => Promise<PrinterInfo[]>;
   printCard: (
     html: string,

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1275" height="2022" viewBox="0 0 53.98 85.60" preserveAspectRatio="none">
+  <rect width="53.98" height="85.60" fill="#fff"/>
+  <rect width="53.98" height="15" fill="@accent"/>
+  <rect y="77" width="53.98" height="8.6" fill="@accent"/>
+  <path d="M26.99 2.5l-2.6 3.5h5.2Z" fill="#fff"/>
+
+  <!-- The inset border and corner marks sit 2 and 1 mm from the side edges. -->
+  <rect x="2" y="2" width="49.98" height="81.60" rx="2" fill="none" stroke="#a8a8aa" stroke-width=".15"/>
+  <path d="M1 5V1h4m43.98 0h4v4M1 80.60v4h4m43.98 0h4v-4" fill="none" stroke="#fff" stroke-width=".2"/>
+
+  <!-- The larger marks are 5 mm from their adjacent sides. -->
+  <path d="M3 5h4M5 3v4m41.98-2h4m-2-2v4M3 80.60h4m-2-2v4m41.98-2h4m-2-2v4" fill="none" stroke="#fff" stroke-width=".22"/>
+
+  <!-- Measure between outer end ticks. The horizontal and vertical spans are each 20 mm. -->
+  <path d="M16.99 46.8h20m-20-1.3v2.6m20-2.6v2.6m-10-11.3v20m-1.3-20h2.6m-2.6 20h2.6" fill="none" stroke="#242428" stroke-width=".18"/>
+  <path d="M21.99 46v1.6m10-1.6v1.6m-5.8-5.8h1.6m-1.6 10h1.6" fill="none" stroke="#242428" stroke-width=".15"/>
+
+  <rect x="8.99" y="68" width="6" height="4" fill="#18181b"/>
+  <rect x="14.99" y="68" width="6" height="4" fill="#6b6b70"/>
+  <rect x="20.99" y="68" width="6" height="4" fill="#dfdfdf"/>
+  <rect x="26.99" y="68" width="6" height="4" fill="#b83232"/>
+  <rect x="32.99" y="68" width="6" height="4" fill="#40844d"/>
+  <rect x="38.99" y="68" width="6" height="4" fill="#31599a"/>
+
+  @labels
+</svg>

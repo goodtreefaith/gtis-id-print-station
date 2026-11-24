@@ -21,6 +21,7 @@ export interface StudentListProps {
   printedAt?: Record<string, number>;
   /** Typed text not searched yet: Enter and Ctrl+P wait for it. */
   searchPending?: boolean;
+  previewOnly?: boolean;
 }
 
 const HIDE_PRINTED_KEY = 'gtis-id-print-station.hide-printed';
@@ -40,7 +41,7 @@ function missingFor(student: StudentRecord) {
 }
 
 export const StudentList = forwardRef<HTMLInputElement, StudentListProps>(function StudentList(
-  { query, onQueryChange, students: allStudents, selectedId, onSelect, onConfirm, loading, error, hasMore, onLoadMore, onRefresh, printedAt = {}, searchPending },
+  { query, onQueryChange, students: allStudents, selectedId, onSelect, onConfirm, loading, error, hasMore, onLoadMore, onRefresh, printedAt = {}, searchPending, previewOnly },
   searchRef
 ) {
   const [hidePrinted, setHidePrintedState] = useState(() => {
@@ -125,9 +126,9 @@ export const StudentList = forwardRef<HTMLInputElement, StudentListProps>(functi
         ) : null}
       </div>
       <p className="search-hint">
-        <span className="hint-long">↑↓ choose · Enter open · Ctrl+P print</span>
+        <span className="hint-long">{previewOnly ? '↑↓ choose' : '↑↓ choose · Enter open · Ctrl+P print'}</span>
         <span className="hint-short" aria-hidden="true">
-          ↑↓ · Enter · Ctrl+P
+          {previewOnly ? '↑↓' : '↑↓ · Enter · Ctrl+P'}
         </span>
       </p>
 

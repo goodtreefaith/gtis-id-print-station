@@ -1,0 +1,85 @@
+name: Rust Windows previews
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/rust-preview.yml"
+      - "rust-station/**"
+      - "public/**"
+      - "src/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-previews:
+    name: Build offline Windows previews
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/rust-station/target
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+    steps:
+      - name: Checkout (full history for the secret scan)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            rust-station/package-lock.json
+
+      - name: Test the calibration renderer
+        run: cargo +stable test --locked --manifest-path rust-station/calibration/Cargo.toml
+
+      - name: Install calibration frontend dependencies
+        working-directory: rust-station
+        run: npm ci
+
+      - name: Build the calibration frontend
+        working-directory: rust-station
+        run: npm run build
+
+      - name: Install sample station dependencies
+        run: npm ci
+
+      - name: Build the sample station frontend
+        run: npm run build
+
+      - name: Prepare the offline sample station bundle
+        run: node rust-station/scripts/prepare-ci3-preview.mjs
+
+      - name: Public-safety checks (source, frontend builds, history)
+        run: npm run check:public
+
+      - name: Compile the calibration EXE
+        run: cargo +stable build --locked --release --features custom-protocol --manifest-path rust-station/src-tauri/Cargo.toml
+
+      - name: Compile the sample station EXE
+        run: cargo +stable build --locked --release --features custom-protocol --manifest-path rust-station/ci3-preview/Cargo.toml
+
+      - name: Upload offline preview EXEs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-id-print-station-windows-previews
+          if-no-files-found: error
+          path: |
+            rust-station/target/release/good-tree-id-print-station.exe
+            rust-station/target/release/gtis-id-print-station-sample.exe
