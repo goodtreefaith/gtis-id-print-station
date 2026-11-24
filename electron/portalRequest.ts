@@ -1,10 +1,11 @@
-// Portal HTTP calls made on behalf of the renderer. The device token is added
-// here, in the main process, so it never reaches the renderer or DevTools.
-// This module has no Electron imports so it can be tested with plain Node.
+// Portal HTTP calls made on behalf of the renderer, from the main process.
+// There is no device token: the only credential is the signed-in staff
+// member's operator token, passed through as X-GTIS-IDPRINT-OPERATOR. The
+// main process restricts where requests can go. This module has no Electron
+// imports so it can be tested with plain Node.
 
 export interface PortalConnection {
   baseUrl: string;
-  token: string;
 }
 
 export interface PortalBridgeRequest {
@@ -23,7 +24,7 @@ export interface PortalBridgeResponse {
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export const PORTAL_PATH_PREFIX = '/idprintapi/';
-/** The only portal hosts a packaged station may be set up against. */
+/** The only portal hosts the station may talk to. */
 export const PORTAL_HOST_ALLOWLIST: readonly string[] = ['portal.gtis.edu.ph', 'preportal.gtis.edu.ph'];
 const DEFAULT_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -138,11 +139,7 @@ export async function portalRequest(
   const isUpload = /\/(id-card-documents|photo)$/.test(url.pathname);
   const timeoutMs = options.timeoutMs ?? (isUpload ? UPLOAD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
   const headers: Record<string, string> = {
-    Accept: 'application/json',
-    Authorization: `Bearer ${connection.token}`,
-    // The live host drops Authorization before PHP sees it; this header is
-    // the one that actually authenticates the device.
-    'X-GTIS-IDPRINT-TOKEN': connection.token
+    Accept: 'application/json'
   };
   if (request.method === 'POST') {
     headers['Content-Type'] = 'application/json';
@@ -157,7 +154,7 @@ export async function portalRequest(
       method: request.method,
       headers,
       body: request.method === 'POST' ? JSON.stringify(request.body ?? {}) : undefined,
-      // Never forward the device token to another host via a redirect.
+      // Never forward the operator session to another host via a redirect.
       redirect: 'error',
       credentials: 'omit',
       cache: 'no-store',
@@ -180,27 +177,4 @@ export async function portalRequest(
   }
 
   return { ok: response.ok, status: response.status, payload };
-}
-
-export type TokenCheck = 'accepted' | 'rejected' | 'unreachable';
-
-/**
- * Checks a device token without operator credentials. The portal answers 422
- * "Email and password are required." only after it accepted the device
- * token, and 401 when it rejects the token.
- */
-export async function checkDeviceToken(connection: PortalConnection, fetchImpl: FetchLike): Promise<{ check: TokenCheck; status: number }> {
-  const result = await portalRequest(
-    connection,
-    { method: 'POST', path: '/idprintapi/login', body: { username: '', password: '' } },
-    fetchImpl,
-    { timeoutMs: 15_000 }
-  );
-  if (result.status === 422) {
-    return { check: 'accepted', status: result.status };
-  }
-  if (result.status === 401 || result.status === 403) {
-    return { check: 'rejected', status: result.status };
-  }
-  return { check: 'unreachable', status: result.status };
 }

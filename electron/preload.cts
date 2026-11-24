@@ -9,14 +9,10 @@ contextBridge.exposeInMainWorld('gtPrint', {
   captureCardPngs: (html: string) => ipcRenderer.invoke('card:capturePngs', html),
   fetchImageDataUrl: (url: string) => ipcRenderer.invoke('image:fetchDataUrl', url),
   readAssetDataUrl: (assetPath: string) => ipcRenderer.invoke('asset:readDataUrl', assetPath),
-  // The device token stays in the main process. Only status comes back.
-  device: {
-    status: () => ipcRenderer.invoke('device:status'),
-    configure: (input: { portalUrl: string; token: string }) =>
-      ipcRenderer.invoke('device:configure', { portalUrl: input?.portalUrl, token: input?.token }),
-    clear: () => ipcRenderer.invoke('device:clear')
-  },
+  // Portal calls run in the main process (fixed, allowlisted portal; the
+  // only credential is the staff member's operator token).
   portal: {
+    info: () => ipcRenderer.invoke('portal:info'),
     request: (req: { method: 'GET' | 'POST'; path: string; body?: unknown; operatorToken?: string }) =>
       ipcRenderer.invoke('portal:request', {
         method: req?.method,

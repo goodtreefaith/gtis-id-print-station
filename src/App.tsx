@@ -14,7 +14,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ChangeEvent, FormEvent } from 'react';
 import type {
-  DeviceStatus,
   GuardianContact,
   OperatorSession,
   PortalSettings,
@@ -45,10 +44,10 @@ import {
   studentLastNameLine
 } from './lib/student';
 import {
-  bridgeErrorMessage,
   clearOperatorSession,
   hasPortalConfig,
   hasValidOperatorSession,
+  loadPortalSettings,
   SAMPLE_PORTAL_SETTINGS,
   loadOperatorSession,
   loginOperator,
@@ -155,48 +154,29 @@ export default function App() {
   const [silentPrint, setSilentPrint] = useState(false);
   const [busy, setBusy] = useState(false);
   const [portalSettings, setPortalSettings] = useState<PortalSettings>(SAMPLE_PORTAL_SETTINGS);
-  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
-  const [deviceChecked, setDeviceChecked] = useState(false);
-  const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
+  const [portalChecked, setPortalChecked] = useState(false);
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => loadOperatorSession());
   const [loginDraft, setLoginDraft] = useState({ username: '', password: '' });
   const [loginBusy, setLoginBusy] = useState(false);
-  const [status, setStatus] = useState('Checking device setup...');
+  const [status, setStatus] = useState('Starting...');
   const liveMode = hasPortalConfig(portalSettings);
-  const operatorReady = deviceChecked && (!liveMode || hasValidOperatorSession(operatorSession));
+  const operatorReady = portalChecked && (!liveMode || hasValidOperatorSession(operatorSession));
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
   const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
 
   useEffect(() => {
     void loadOptionalIdCardFont();
-    void refreshDeviceStatus();
+    void refreshPortalSettings();
   }, []);
 
-  async function refreshDeviceStatus() {
-    const bridge = window.gtPrint;
-    let nextStatus: DeviceStatus | null = null;
-    if (bridge?.device && bridge.portal) {
-      try {
-        nextStatus = await bridge.device.status();
-      } catch {
-        nextStatus = null;
-      }
+  async function refreshPortalSettings() {
+    try {
+      setPortalSettings(await loadPortalSettings());
+    } catch {
+      setStatus('Could not start the portal connection. Restart the app.');
+      return;
     }
-    setDeviceStatus(nextStatus);
-    setPortalSettings(
-      nextStatus?.configured ? { baseUrl: nextStatus.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS
-    );
-    setDeviceChecked(true);
-  }
-
-  function handleDeviceChanged(nextStatus: DeviceStatus, message: string) {
-    // A different device setup means a different portal session.
-    clearOperatorSession();
-    setOperatorSession(null);
-    setDeviceStatus(nextStatus);
-    setPortalSettings(nextStatus.configured ? { baseUrl: nextStatus.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS);
-    setRefreshCount((value) => value + 1);
-    setStatus(message);
+    setPortalChecked(true);
   }
 
   useEffect(() => {
@@ -658,7 +638,7 @@ export default function App() {
   }
 
   function handleRefreshStudents() {
-    void refreshDeviceStatus();
+    void refreshPortalSettings();
     setStudentPage(1);
     setRefreshCount((value) => value + 1);
     setStatus('Refreshing students...');
@@ -698,7 +678,7 @@ export default function App() {
     setStatus('Signed out.');
   }
 
-  if (!deviceChecked) {
+  if (!portalChecked) {
     return (
       <main className="login-shell">
         <div className="status-line">{status}</div>
@@ -732,7 +712,7 @@ export default function App() {
             <LogIn size={17} /> {loginBusy ? 'Signing in...' : 'Sign In'}
           </button>
           <div className="status-line">{status}</div>
-          <DeviceSetupPanel status={deviceStatus} onChanged={handleDeviceChanged} />
+          <div className="status-line">Signing in to {portalHostLabel(portalSettings.baseUrl)}</div>
         </form>
       </main>
     );
@@ -804,13 +784,7 @@ export default function App() {
             </p>
             {!liveMode ? (
               <p>
-                <strong>Sample mode</strong> - not connected to the portal. Changes stay on this computer.{' '}
-                {deviceStatus?.message ? `${deviceStatus.message} ` : ''}
-                {deviceStatus ? (
-                  <button type="button" className="icon-text-button" onClick={() => setDeviceSetupOpen((open) => !open)}>
-                    {deviceSetupOpen ? 'Hide device setup' : 'Device setup'}
-                  </button>
-                ) : null}
+                <strong>Sample mode</strong> - not connected to the portal. Changes stay on this computer.
               </p>
             ) : null}
 
@@ -843,11 +817,6 @@ export default function App() {
           </section>
 
           <aside className="control-panel">
-            {!liveMode && deviceSetupOpen ? (
-              <section className="panel-section">
-                <DeviceSetupPanel status={deviceStatus} onChanged={handleDeviceChanged} />
-              </section>
-            ) : null}
             {selected && readiness && nameDraft && guardianDraft && idDraft ? (
               <>
                 <section className="panel-section">
@@ -1008,110 +977,12 @@ function CheckList({ items }: { items: Array<[string, boolean]> }) {
   );
 }
 
-/**
- * Plain one-time device setup. The token goes straight to the main process,
- * is encrypted there, and nothing derived from it is ever shown again.
- */
-function DeviceSetupPanel({
-  status,
-  onChanged
-}: {
-  status: DeviceStatus | null;
-  onChanged: (status: DeviceStatus, message: string) => void;
-}) {
-  const [portalUrl, setPortalUrl] = useState(status?.portalUrl || 'https://portal.gtis.edu.ph');
-  const [token, setToken] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const device = window.gtPrint?.device;
-
-  if (!device || !status) {
-    return null;
-  }
-
-  let portalHost = status.portalUrl;
+function portalHostLabel(portalUrl: string) {
   try {
-    portalHost = new URL(status.portalUrl).host;
+    return new URL(portalUrl).host;
   } catch {
-    // Show the stored value as-is.
+    return portalUrl;
   }
-
-  async function handleSave() {
-    if (!device) {
-      return;
-    }
-    setBusy(true);
-    setMessage('Checking the token with the portal...');
-    try {
-      const result = await device.configure({ portalUrl, token });
-      setToken('');
-      if (result.check === 'rejected') {
-        setMessage('The portal rejected this device token. Nothing was saved.');
-        return;
-      }
-      if (result.check !== 'accepted') {
-        setMessage('The portal could not confirm the token (check the internet connection). Nothing was saved; try again.');
-        return;
-      }
-      const text = 'Device set up. The portal accepted the token.';
-      setMessage(text);
-      onChanged(result, text);
-    } catch (error) {
-      setMessage(bridgeErrorMessage(error, 'Device setup failed.'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleClear() {
-    if (!device || !window.confirm('Remove the saved device token from this computer? The station returns to sample mode.')) {
-      return;
-    }
-    setBusy(true);
-    try {
-      const next = await device.clear();
-      setMessage('Device token removed.');
-      onChanged(next, 'Device token removed. Sample mode.');
-    } catch (error) {
-      setMessage(bridgeErrorMessage(error, 'Could not remove the device token.'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (status.configured) {
-    return (
-      <div className="device-setup">
-        <p>Portal: {portalHost}</p>
-        <button type="button" className="icon-text-button" onClick={handleClear} disabled={busy}>
-          Reset device setup
-        </button>
-        {message ? <p>{message}</p> : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="device-setup">
-      <h2>Device setup</h2>
-      <p>For school IT: enter the portal address and this station's device token once. It is stored encrypted on this computer.</p>
-      {status.message ? <p>{status.message}</p> : null}
-      {!status.encryptionAvailable ? (
-        <p>This computer cannot encrypt the token, so it cannot be saved here.</p>
-      ) : null}
-      <Field label="Portal address" value={portalUrl} onChange={setPortalUrl} />
-      <Field label="Device token" type="password" value={token} onChange={setToken} />
-      <button
-        type="button"
-        className="button secondary"
-        onClick={handleSave}
-        disabled={busy || !status.encryptionAvailable || !portalUrl.trim() || !token.trim()}
-      >
-        {busy ? 'Checking...' : 'Save device setup'}
-      </button>
-      {message ? <p>{message}</p> : null}
-    </div>
-  );
 }
 
 function Field({

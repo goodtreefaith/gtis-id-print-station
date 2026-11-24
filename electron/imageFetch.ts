@@ -12,7 +12,7 @@ function checkImageUrl(url: URL, allowedHost: string, requireHttps: boolean) {
     throw new Error('Photos can only be downloaded over https.');
   }
   if (url.username || url.password || url.host.toLowerCase() !== allowedHost.toLowerCase()) {
-    throw new Error('Photos can only be downloaded from the configured portal.');
+    throw new Error('Photos can only be downloaded from the portal.');
   }
 }
 
@@ -25,7 +25,7 @@ export async function fetchImageDataUrl(
   const requireHttps = options.requireHttps ?? true;
   const maxBytes = options.maxBytes ?? MAX_IMAGE_BYTES;
   if (!allowedHost) {
-    throw new Error('Photos can only be downloaded after device setup.');
+    throw new Error('Photos are not downloaded in sample mode.');
   }
   let url: URL;
   try {
