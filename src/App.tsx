@@ -1,18 +1,23 @@
 import {
+  AlertCircle,
+  AlertTriangle,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  Circle,
   FileDown,
   ImagePlus,
-  LogIn,
   LogOut,
+  Pencil,
   Printer,
-  RefreshCw,
+  RotateCcw,
   Save,
-  Search,
-  X
+  Settings,
+  Undo2,
+  UserRound
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, ChangeEvent, FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import type {
   DeviceStatus,
   GuardianContact,
@@ -24,26 +29,10 @@ import type {
   StudentRecord
 } from './types';
 import { publicAssetToDataUrl } from './lib/assets';
-import {
-  emergencyAddressFontPx,
-  emergencyNameFontPx,
-  emergencyPhoneFontPx,
-  frontFirstNameFontPx,
-  frontGradeFontPx,
-  frontLastNameFontPx
-} from './lib/cardText';
 import { loadOptionalIdCardFont, optionalIdCardFontFaceCss } from './lib/fonts';
-import { cardLayers } from './lib/layout';
 import { renderArchiveHtml, renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
-import {
-  readinessFor,
-  studentFirstNameLine,
-  studentFullName,
-  studentGradeLine,
-  studentIdentifierLines,
-  studentLastNameLine
-} from './lib/student';
+import { studentFullName, studentGradeLine } from './lib/student';
 import {
   bridgeErrorMessage,
   clearOperatorSession,
@@ -60,47 +49,63 @@ import {
   uploadIdCardDocuments,
   updatePhoto
 } from './lib/portalClient';
+import { BACK_TEMPLATE, CardPreview, FRONT_TEMPLATE } from './components/CardPreview';
+import type { CardSide } from './components/CardPreview';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import type { ConfirmAction } from './components/ConfirmDialog';
+import { DeviceSetup } from './components/DeviceSetup';
+import { Field } from './components/Field';
+import { LockScreen } from './components/LockScreen';
+import { ModeBadge, hostOf } from './components/ModeBadge';
+import type { StationMode } from './components/ModeBadge';
+import { PhotoEditor } from './components/PhotoEditor';
+import { StatusStrip } from './components/StatusStrip';
+import { StudentList } from './components/StudentList';
+import { imageSourceToDataUrl } from './ui/images';
+import type { FlowState, FlowSteps } from './ui/printFlow';
+import { friendlyPrintError, friendlyUploadError, idleFlow } from './ui/printFlow';
+import { useFocusTrap } from './ui/useFocusTrap';
+import type { FieldIssue, FieldKey, FitReport } from './ui/validation';
+import { checkFields, emptyFit, fitLabels } from './ui/validation';
 
-const FRONT_TEMPLATE = 'templates/2026-2027/front.clean-2026.svg';
-const BACK_TEMPLATE = 'templates/2026-2027/back.canva.svg';
 const STUDENT_PAGE_LIMIT = 20;
+const READ_ONLY_MESSAGE = 'This account can print IDs but cannot change portal records.';
+/** Remembers that this station chose Sample mode at first run, so setup does not open every time. */
+const SETUP_SEEN_KEY = 'gtis-id-print-station.device-setup-seen';
 
 interface PrintFieldOptions {
   includeLrn: boolean;
   includeEsc: boolean;
 }
 
-function previewLastNameStyle(lastName: string): CSSProperties {
-  return {
-    ...cardLayers.lastName,
-    fontSize: `${frontLastNameFontPx(lastName)}px`
-  };
+interface CardDocuments {
+  /** Printer copy: back rotated 180 degrees for the card flip. */
+  printHtml: string;
+  /** Portal Documents copy: both sides upright. */
+  archiveHtml: string;
 }
 
-function previewFirstNameStyle(firstName: string): CSSProperties {
-  return {
-    ...cardLayers.firstName,
-    fontSize: `${frontFirstNameFontPx(firstName)}px`
-  };
+interface LastPrint extends CardDocuments {
+  studentId: string;
+  name: string;
+  /** "N. Villanueva" for the Reprint last button. */
+  shortLabel: string;
+  admissionNo: string;
+  uploaded: boolean;
+  at: number;
 }
 
-function previewGradeStyle(grade: string): CSSProperties {
-  return {
-    ...cardLayers.grade,
-    fontSize: `${frontGradeFontPx(grade)}px`
-  };
+interface PrintJob {
+  reprint?: LastPrint;
+  /** The operator already confirmed a possible duplicate card. */
+  confirmed?: boolean;
 }
 
-function previewEmergencyNameStyle(name: string): CSSProperties {
-  return { fontSize: `${emergencyNameFontPx(name)}px` };
-}
-
-function previewEmergencyAddressStyle(address: string): CSSProperties {
-  return { fontSize: `${emergencyAddressFontPx(address)}px` };
-}
-
-function previewEmergencyPhoneStyle(phone: string): CSSProperties {
-  return { fontSize: `${emergencyPhoneFontPx(phone)}px` };
+interface Blocker {
+  key: string;
+  label: string;
+  fixLabel?: string;
+  onFix?: () => void;
 }
 
 function printableStudent(
@@ -136,6 +141,101 @@ function mergeStudents(current: StudentRecord[], incoming: StudentRecord[]) {
   return [...current, ...incoming.filter((student) => !seen.has(student.id))];
 }
 
+function errorText(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/** "Nathaniel Villanueva": short enough for messages and buttons. */
+function shortName(student: StudentRecord) {
+  const first = cleanValue(student.firstName).split(' ')[0] || '';
+  return [first, cleanValue(student.lastName)].filter(Boolean).join(' ');
+}
+
+function timeOf(ms: number) {
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function readSetupSeen() {
+  try {
+    return window.localStorage.getItem(SETUP_SEEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeSetupSeen() {
+  try {
+    window.localStorage.setItem(SETUP_SEEN_KEY, '1');
+  } catch {
+    // Storage unavailable: setup simply shows again next time.
+  }
+}
+
+const PRINTER_KEY = 'gtis-id-print-station.printer';
+const PRINTED_KEY_PREFIX = 'gtis-id-print-station.printed-';
+
+function todayKey() {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${PRINTED_KEY_PREFIX}${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+interface PrintedToday {
+  at: Record<string, number>;
+  names: Record<string, string>;
+}
+
+/** Students printed today on this station (per-device convenience; lost if storage is cleared). */
+function readPrintedToday(): PrintedToday {
+  try {
+    const raw = window.localStorage.getItem(todayKey());
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === 'object' && parsed.at && parsed.names) return parsed as PrintedToday;
+  } catch {
+    // Unreadable or blocked storage: start empty.
+  }
+  return { at: {}, names: {} };
+}
+
+function writePrintedToday(value: PrintedToday) {
+  try {
+    window.localStorage.setItem(todayKey(), JSON.stringify(value));
+  } catch {
+    // Storage unavailable: the marks last for this session only.
+  }
+}
+
+function readPrinterPrefs(): { printer: string; silent: boolean } {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PRINTER_KEY) || '{}');
+    return { printer: typeof parsed.printer === 'string' ? parsed.printer : '', silent: parsed.silent === true };
+  } catch {
+    return { printer: '', silent: false };
+  }
+}
+
+function writePrinterPrefs(printer: string, silent: boolean) {
+  try {
+    window.localStorage.setItem(PRINTER_KEY, JSON.stringify({ printer, silent }));
+  } catch {
+    // Storage unavailable: settings last for this session only.
+  }
+}
+
+/** "N. Villanueva" for buttons. */
+function initialName(student: StudentRecord) {
+  const first = cleanValue(student.firstName);
+  return [first ? `${first[0]}.` : '', cleanValue(student.lastName)].filter(Boolean).join(' ');
+}
+
+function settingsFor(status: DeviceStatus | null): PortalSettings {
+  return status?.configured ? { baseUrl: status.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS;
+}
+
+function needsAttention(status: DeviceStatus | null) {
+  return Boolean(status && !status.configured && (status.message || (status.portalUrl && !status.tokenReadable)));
+}
+
 export default function App() {
   const [query, setQuery] = useState('');
   const [students, setStudents] = useState<StudentRecord[]>([]);
@@ -143,6 +243,7 @@ export default function App() {
   const [studentPage, setStudentPage] = useState(1);
   const [hasMoreStudents, setHasMoreStudents] = useState(false);
   const [loadingStudents, setLoadingStudents] = useState(false);
+  const [listError, setListError] = useState('');
   const [refreshCount, setRefreshCount] = useState(0);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [nameDraft, setNameDraft] = useState<StudentNameDetails | null>(null);
@@ -150,29 +251,69 @@ export default function App() {
   const [idDraft, setIdDraft] = useState<StudentIdDetails | null>(null);
   const [printFields, setPrintFields] = useState<PrintFieldOptions>({ includeLrn: true, includeEsc: true });
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [photoError, setPhotoError] = useState('');
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
-  const [selectedPrinter, setSelectedPrinter] = useState('');
-  const [silentPrint, setSilentPrint] = useState(false);
+  const [selectedPrinter, setSelectedPrinter] = useState(() => readPrinterPrefs().printer);
+  const [silentPrint, setSilentPrint] = useState(() => readPrinterPrefs().silent);
+  const [printerOpen, setPrinterOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [portalSettings, setPortalSettings] = useState<PortalSettings>(SAMPLE_PORTAL_SETTINGS);
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [deviceChecked, setDeviceChecked] = useState(false);
-  const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  /** Device setup opened on purpose from the app or lock screen (not first run): it can be cancelled. */
+  const [setupFromApp, setSetupFromApp] = useState(false);
+  const setupTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => loadOperatorSession());
   const [loginDraft, setLoginDraft] = useState({ username: '', password: '' });
   const [loginBusy, setLoginBusy] = useState(false);
-  const [status, setStatus] = useState('Checking device setup...');
+  const [loginError, setLoginError] = useState('');
+  const [fit, setFit] = useState<FitReport>(emptyFit);
+  const [pendingSwitch, setPendingSwitch] = useState<StudentRecord | null>(null);
+  const [confirm, setConfirm] = useState<{ title: string; body: ReactNode; actions: ConfirmAction[]; testId: string } | null>(null);
+  const [lastPrint, setLastPrint] = useState<LastPrint | null>(null);
+  const [printedToday, setPrintedToday] = useState<PrintedToday>(() => readPrintedToday());
+  const printedAt = printedToday.at;
+  const [previewPref, setPreviewPref] = useState<{ side: CardSide; n: number }>({ side: 'front', n: 0 });
+  const setPreviewSide = (side: CardSide) => setPreviewPref((current) => ({ side, n: current.n + 1 }));
+  /** Query the visible results belong to; Print waits until it matches what is typed. */
+  const [loadedQuery, setLoadedQuery] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<null | 'print' | 'focus-print'>(null);
+  /** Which student the edit fields belong to. Edits only count, save or print for that student. */
+  const [draftOwner, setDraftOwner] = useState<string | null>(null);
   const liveMode = hasPortalConfig(portalSettings);
+  const [flow, setFlow] = useState<FlowState>(() => idleFlow(false));
   const operatorReady = deviceChecked && (!liveMode || hasValidOperatorSession(operatorSession));
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
   const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
+  const deviceBridge = window.gtPrint?.device && window.gtPrint?.portal ? window.gtPrint.device : null;
+  const stationMode: StationMode = liveMode ? 'live' : needsAttention(deviceStatus) ? 'attention' : 'sample';
+
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const printButtonRef = useRef<HTMLButtonElement | null>(null);
+  const printerButtonRef = useRef<HTMLButtonElement | null>(null);
+  const printerPopoverRef = useRef<HTMLDivElement | null>(null);
+  const fieldRefs = useRef<Partial<Record<FieldKey, HTMLInputElement | HTMLTextAreaElement | null>>>({});
+  const printingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const studentsRef = useRef<StudentRecord[]>([]);
+  const selectedRef = useRef<StudentRecord | null>(null);
+  const lastLoadedQueryRef = useRef<string | null>(null);
+  const lastPrintedShortRef = useRef('');
+  /** After a successful print the search is cleared; keep the printed student on screen. */
+  const keepSelectionRef = useRef(false);
+  const lastJobRef = useRef<{ archiveHtml: string; studentId: string; printSummary: string } | null>(null);
+  /** The job "Try again" repeats, and whether a card may already have come out. */
+  const retryJobRef = useRef<{ reprint?: LastPrint; studentId?: string; mayHavePrinted?: boolean }>({});
+  studentsRef.current = students;
+  selectedRef.current = selected;
 
   useEffect(() => {
     void loadOptionalIdCardFont();
-    void refreshDeviceStatus();
+    void refreshDeviceStatus(true);
   }, []);
 
-  async function refreshDeviceStatus() {
+  async function refreshDeviceStatus(firstRun = false) {
     const bridge = window.gtPrint;
     let nextStatus: DeviceStatus | null = null;
     if (bridge?.device && bridge.portal) {
@@ -183,27 +324,33 @@ export default function App() {
       }
     }
     setDeviceStatus(nextStatus);
-    setPortalSettings(
-      nextStatus?.configured ? { baseUrl: nextStatus.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS
-    );
+    setPortalSettings(settingsFor(nextStatus));
     setDeviceChecked(true);
+    if (firstRun && nextStatus && !nextStatus.configured && (needsAttention(nextStatus) || !readSetupSeen())) {
+      setSetupOpen(true);
+    }
   }
 
-  function handleDeviceChanged(nextStatus: DeviceStatus, message: string) {
+  function handleDeviceChanged(nextStatus: DeviceStatus) {
     // A different device setup means a different portal session.
     clearOperatorSession();
     setOperatorSession(null);
     setDeviceStatus(nextStatus);
-    setPortalSettings(nextStatus.configured ? { baseUrl: nextStatus.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS);
+    setPortalSettings(settingsFor(nextStatus));
+    setStudents([]);
+    setSelected(null);
+    setLastPrint(null);
+    lastJobRef.current = null;
+    setLoadedQuery(null);
+    lastLoadedQueryRef.current = null;
     setRefreshCount((value) => value + 1);
-    setStatus(message);
+    setFlow(idleFlow(Boolean(nextStatus.configured)));
   }
 
   useEffect(() => {
     if (!operatorReady) {
       setStudents([]);
       setSelected(null);
-      setStatus('Sign in with your portal account.');
       return;
     }
 
@@ -218,10 +365,17 @@ export default function App() {
     };
   }, [query, portalSettings, operatorReady, operatorSession?.token, refreshCount]);
 
+  useEffect(() => {
+    if (operatorReady && !setupOpen) {
+      window.setTimeout(() => searchRef.current?.focus(), 0);
+    }
+  }, [operatorReady, setupOpen]);
+
   async function loadStudents(page: number, replace: boolean, isCanceled = () => false) {
     setLoadingStudents(true);
+    const searched = query;
     try {
-      const result = await searchStudents(query, {
+      const result = await searchStudents(searched, {
         page,
         limit: STUDENT_PAGE_LIMIT,
         settings: portalSettings,
@@ -232,22 +386,48 @@ export default function App() {
         return;
       }
 
+      setListError('');
       setStudentPage(result.page);
       setHasMoreStudents(result.hasMore);
-      setStudents((current) => {
-        const next = replace ? result.students : mergeStudents(current, result.students);
-        setSelected((selectedStudent) => {
-          if (selectedStudent && next.some((student) => student.id === selectedStudent.id)) {
-            return selectedStudent;
-          }
-          return next[0] || null;
-        });
-        return next;
-      });
-      setStatus(result.message || (result.source === 'portal' ? 'Student records loaded.' : 'Sample data loaded for local testing.'));
+      const next = replace ? result.students : mergeStudents(studentsRef.current, result.students);
+      const queryChanged = replace && lastLoadedQueryRef.current !== searched;
+      if (replace) {
+        lastLoadedQueryRef.current = searched;
+        setLoadedQuery(searched);
+      }
+      setStudents(next);
+
+      // Selection rule: a new search shows its first match, so Print never targets a student who
+      // is not in the results. Refresh and paging keep the current student when it is still there.
+      const current = selectedRef.current;
+      let target: StudentRecord | null;
+      if (keepSelectionRef.current) {
+        keepSelectionRef.current = false;
+        target = current;
+      } else if (!replace) {
+        target = current || next[0] || null;
+      } else if (queryChanged) {
+        if (current && dirtyRef.current) {
+          // Unsaved edits: ask before leaving them, instead of silently switching.
+          if (next[0] && next[0].id !== current.id) setPendingSwitch(next[0]);
+          target = current;
+        } else {
+          target = next[0] || null;
+        }
+      } else {
+        const same = current ? next.find((student) => student.id === current.id) : undefined;
+        target = same ? current : current && dirtyRef.current ? current : next[0] || null;
+      }
+      setSelected(target);
     } catch (error) {
       if (!isCanceled()) {
-        setStatus(error instanceof Error ? error.message : 'Could not load students.');
+        setListError(errorText(error, 'The portal did not answer.'));
+        setPendingAction((pending) => {
+          if (pending === 'print') {
+            setFlow({ tone: 'error', title: 'Search failed. Nothing was printed.', detail: errorText(error, 'The portal did not answer.') });
+          }
+          return null;
+        });
       }
     } finally {
       if (!isCanceled()) {
@@ -256,24 +436,48 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
+  // Layout effect: drafts and the status strip switch with the student before any key or click
+  // can see a stale frame.
+  useLayoutEffect(() => {
+    setFlow((current) => {
+      if (current.tone === 'working' || current.retry === 'upload') return current;
+      if (current.studentId && current.studentId === selected?.id) return current;
+      if (current.retry === 'print' && retryJobRef.current.reprint) return current;
+      return idleFlow(hasPortalConfig(portalSettings), !operatorCanEditPortal);
+    });
     if (!selected) {
       setQrDataUrl('');
       setNameDraft(null);
       setGuardianDraft(null);
       setIdDraft(null);
+      setDraftOwner(null);
       return;
     }
 
+    setDraftOwner(selected.id);
     setNameDraft({ firstName: selected.firstName || '', lastName: selected.lastName || '' });
     setGuardianDraft(selected.guardian);
     setIdDraft({ lrn: selected.lrn || '', esc: selected.esc || '' });
     setPrintFields({ includeLrn: Boolean(selected.lrn), includeEsc: Boolean(selected.esc) });
-    makeAdmissionQr(selected.admissionNo).then(setQrDataUrl).catch(() => {
-      setQrDataUrl('');
-      setStatus('QR generation failed.');
-    });
+    setFit(emptyFit);
+    setQrDataUrl('');
+    const qrFor = selected.id;
+    makeAdmissionQr(selected.admissionNo)
+      .then((url) => {
+        // A late QR for a student who is no longer selected must never reach the card.
+        if (selectedRef.current?.id === qrFor) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (selectedRef.current?.id !== qrFor) return;
+        setQrDataUrl('');
+        setPendingAction(null);
+        setFlow({ tone: 'error', title: 'Couldn’t make the QR code for this student.', detail: 'Choose the student again, or restart the app.' });
+      });
   }, [selected?.id]);
+
+  useEffect(() => {
+    writePrinterPrefs(selectedPrinter, silentPrint);
+  }, [selectedPrinter, silentPrint]);
 
   useEffect(() => {
     if (!window.gtPrint) {
@@ -282,7 +486,9 @@ export default function App() {
 
     window.gtPrint.listPrinters().then((availablePrinters) => {
       setPrinters(availablePrinters);
+      const saved = readPrinterPrefs().printer;
       const preferred =
+        (saved ? availablePrinters.find((printer) => printer.name === saved) : undefined) ||
         availablePrinters.find((printer) => /smart|idp|card/i.test(printer.name)) ||
         availablePrinters.find((printer) => printer.isDefault) ||
         availablePrinters[0];
@@ -292,24 +498,113 @@ export default function App() {
     });
   }, []);
 
-  const readiness = useMemo(() => {
-    return selected ? readinessFor(selected, Boolean(qrDataUrl)) : null;
-  }, [selected, qrDataUrl]);
+  // Between choosing a student and the edit fields being refilled there is one render where the
+  // fields still hold the previous student. Nothing may read them then.
+  const draftsReady = Boolean(selected && draftOwner === selected.id);
 
   const previewStudent = useMemo(() => {
-    return selected ? printableStudent(selected, nameDraft, guardianDraft, idDraft, printFields) : null;
-  }, [selected, nameDraft, guardianDraft, idDraft, printFields]);
+    if (!selected) return null;
+    if (!draftsReady) {
+      return printableStudent(selected, null, null, { lrn: selected.lrn || '', esc: selected.esc || '' }, {
+        includeLrn: Boolean(selected.lrn),
+        includeEsc: Boolean(selected.esc)
+      });
+    }
+    return printableStudent(selected, nameDraft, guardianDraft, idDraft, printFields);
+  }, [selected, draftsReady, nameDraft, guardianDraft, idDraft, printFields]);
 
-  const canPrint = Boolean(
-    selected &&
-      qrDataUrl &&
-      operatorCanUseStation &&
-      readiness?.enrolled &&
-      readiness.photo &&
-      readiness.guardian &&
-      readiness.qr &&
-      readiness.cr80
+  const dirty = useMemo(() => {
+    if (!selected || !draftsReady) return { name: false, guardian: false, ids: false, any: false };
+    const name = Boolean(
+      nameDraft &&
+        (cleanValue(nameDraft.firstName) !== cleanValue(selected.firstName) ||
+          cleanValue(nameDraft.lastName) !== cleanValue(selected.lastName))
+    );
+    const guardian = Boolean(
+      guardianDraft &&
+        (cleanValue(guardianDraft.name) !== cleanValue(selected.guardian.name) ||
+          cleanValue(guardianDraft.relation) !== cleanValue(selected.guardian.relation) ||
+          cleanValue(guardianDraft.address) !== cleanValue(selected.guardian.address) ||
+          cleanValue(guardianDraft.phone) !== cleanValue(selected.guardian.phone))
+    );
+    const ids = Boolean(
+      idDraft && (cleanValue(idDraft.lrn) !== cleanValue(selected.lrn) || cleanValue(idDraft.esc) !== cleanValue(selected.esc))
+    );
+    return { name, guardian, ids, any: name || guardian || ids };
+  }, [selected, draftsReady, nameDraft, guardianDraft, idDraft]);
+  dirtyRef.current = dirty.any;
+
+  const issues = useMemo(
+    () =>
+      checkFields(
+        {
+          firstName: nameDraft?.firstName || '',
+          lastName: nameDraft?.lastName || '',
+          guardianName: guardianDraft?.name || '',
+          guardianAddress: guardianDraft?.address || '',
+          guardianPhone: guardianDraft?.phone || '',
+          lrn: printFields.includeLrn ? idDraft?.lrn || '' : '',
+          esc: printFields.includeEsc ? idDraft?.esc || '' : ''
+        },
+        fit
+      ),
+    [nameDraft, guardianDraft, idDraft, printFields, fit]
   );
+
+  function focusField(key: FieldKey) {
+    const el = fieldRefs.current[key];
+    el?.focus();
+    el?.scrollIntoView({ block: 'nearest' });
+  }
+
+  const blockers = useMemo(() => {
+    const list: Blocker[] = [];
+    if (!selected) return list;
+    if (!operatorCanUseStation) list.push({ key: 'access', label: 'Your account isn’t allowed to print IDs.' });
+    if (!selected.photoUrl) {
+      list.push({
+        key: 'photo',
+        label: 'No photo yet',
+        fixLabel: 'Add photo',
+        onFix: operatorCanEditPortal ? () => setCaptureOpen(true) : undefined
+      });
+    }
+    if (issues.firstName?.level === 'error' || issues.lastName?.level === 'error') {
+      const key: FieldKey = issues.firstName?.level === 'error' ? 'firstName' : 'lastName';
+      list.push({ key: 'name', label: 'Name on the card is empty', fixLabel: 'Fix', onFix: () => focusField(key) });
+    }
+    const contactKeys: Array<[FieldKey, string]> = [
+      ['guardianName', 'name'],
+      ['guardianPhone', 'phone'],
+      ['guardianAddress', 'address']
+    ];
+    const values: Record<string, string> = {
+      guardianName: guardianDraft?.name || '',
+      guardianPhone: guardianDraft?.phone || '',
+      guardianAddress: guardianDraft?.address || ''
+    };
+    const missing = contactKeys.filter(([key]) => issues[key]?.level === 'error' && !values[key].trim());
+    const badPhone = issues.guardianPhone?.level === 'error' && Boolean(values.guardianPhone.trim());
+    if (missing.length || badPhone) {
+      const parts = [
+        ...(missing.length ? [`no ${missing.map(([, word]) => word).join(' or ')}`] : []),
+        ...(badPhone ? ['phone number isn’t valid'] : [])
+      ];
+      list.push({
+        key: 'contact',
+        label: `Emergency contact: ${parts.join(', ')}`,
+        fixLabel: 'Fix',
+        onFix: () => focusField(missing.length ? missing[0][0] : 'guardianPhone')
+      });
+    }
+    if (!qrDataUrl) list.push({ key: 'qr', label: 'Preparing the QR code…' });
+    return list;
+  }, [selected, issues, qrDataUrl, operatorCanUseStation, operatorCanEditPortal, guardianDraft]);
+
+  const fitWarnings = (Object.keys(fit) as Array<keyof FitReport>).filter((key) => fit[key]);
+  /** The list on screen belongs to what is typed (no debounce or request still pending). */
+  const searchSettled = loadedQuery === query && !loadingStudents;
+  const canPrint = Boolean(selected && draftsReady && blockers.length === 0 && searchSettled && !pendingSwitch);
 
   function applyUpdatedStudent(updated: StudentRecord) {
     setStudents((current) => replaceStudent(current, updated));
@@ -317,72 +612,22 @@ export default function App() {
     return updated;
   }
 
-  function hasDirtyNameDraft(student: StudentRecord) {
-    return Boolean(
-      nameDraft &&
-        (cleanValue(nameDraft.firstName) !== cleanValue(student.firstName) ||
-          cleanValue(nameDraft.lastName) !== cleanValue(student.lastName))
-    );
-  }
-
-  function hasDirtyGuardianDraft(student: StudentRecord) {
-    return Boolean(
-      guardianDraft &&
-        (cleanValue(guardianDraft.name) !== cleanValue(student.guardian.name) ||
-          cleanValue(guardianDraft.relation) !== cleanValue(student.guardian.relation) ||
-          cleanValue(guardianDraft.address) !== cleanValue(student.guardian.address) ||
-          cleanValue(guardianDraft.phone) !== cleanValue(student.guardian.phone))
-    );
-  }
-
-  function hasDirtyIdDraft(student: StudentRecord) {
-    return Boolean(
-      idDraft &&
-        (cleanValue(idDraft.lrn) !== cleanValue(student.lrn) ||
-          cleanValue(idDraft.esc) !== cleanValue(student.esc))
-    );
-  }
-
-  function hasDirtyEditableDrafts(student: StudentRecord) {
-    return hasDirtyNameDraft(student) || hasDirtyGuardianDraft(student) || hasDirtyIdDraft(student);
-  }
-
-  async function saveNameDraftToPortal(baseStudent: StudentRecord, quiet = false) {
-    if (!nameDraft) {
-      return baseStudent;
-    }
-
-    if (!operatorCanEditPortal) {
-      throw new Error('This account can print IDs but cannot update portal records.');
-    }
-
-    const nextName = {
-      firstName: cleanValue(nameDraft.firstName),
-      lastName: cleanValue(nameDraft.lastName)
-    };
-
+  async function saveNameDraftToPortal(baseStudent: StudentRecord) {
+    if (!nameDraft) return baseStudent;
+    if (!operatorCanEditPortal) throw new Error(READ_ONLY_MESSAGE);
+    const nextName = { firstName: cleanValue(nameDraft.firstName), lastName: cleanValue(nameDraft.lastName) };
     if (!nextName.firstName || !nextName.lastName) {
       throw new Error('First name and last name are required before printing.');
     }
-
     const updated = await updateStudentName(baseStudent.id, nextName, portalSettings, operatorSession?.token);
     setNameDraft({ firstName: updated.firstName, lastName: updated.lastName });
     applyUpdatedStudent(updated);
-    if (!quiet) {
-      setStatus(hasPortalConfig(portalSettings) ? 'Student name saved.' : 'Student name saved in sample data.');
-    }
     return updated;
   }
 
-  async function saveGuardianDraftToPortal(baseStudent: StudentRecord, quiet = false) {
-    if (!guardianDraft) {
-      return baseStudent;
-    }
-
-    if (!operatorCanEditPortal) {
-      throw new Error('This account can print IDs but cannot update portal records.');
-    }
-
+  async function saveGuardianDraftToPortal(baseStudent: StudentRecord) {
+    if (!guardianDraft) return baseStudent;
+    if (!operatorCanEditPortal) throw new Error(READ_ONLY_MESSAGE);
     const nextGuardian = {
       name: cleanValue(guardianDraft.name),
       relation: cleanValue(guardianDraft.relation),
@@ -392,25 +637,13 @@ export default function App() {
     const updated = await updateGuardian(baseStudent.id, nextGuardian, portalSettings, operatorSession?.token);
     setGuardianDraft(updated.guardian);
     applyUpdatedStudent(updated);
-    if (!quiet) {
-      setStatus(hasPortalConfig(portalSettings) ? 'Guardian contact saved.' : 'Guardian contact saved in sample data.');
-    }
     return updated;
   }
 
-  async function saveIdDraftToPortal(baseStudent: StudentRecord, quiet = false) {
-    if (!idDraft) {
-      return baseStudent;
-    }
-
-    if (!operatorCanEditPortal) {
-      throw new Error('This account can print IDs but cannot update portal records.');
-    }
-
-    const nextDetails = {
-      lrn: cleanValue(idDraft.lrn),
-      esc: cleanValue(idDraft.esc)
-    };
+  async function saveIdDraftToPortal(baseStudent: StudentRecord) {
+    if (!idDraft) return baseStudent;
+    if (!operatorCanEditPortal) throw new Error(READ_ONLY_MESSAGE);
+    const nextDetails = { lrn: cleanValue(idDraft.lrn), esc: cleanValue(idDraft.esc) };
     const updated = await updateIdDetails(baseStudent.id, nextDetails, portalSettings, operatorSession?.token);
     setIdDraft({ lrn: updated.lrn || '', esc: updated.esc || '' });
     setPrintFields((current) => ({
@@ -418,41 +651,60 @@ export default function App() {
       includeEsc: nextDetails.esc ? current.includeEsc : false
     }));
     applyUpdatedStudent(updated);
-    if (!quiet) {
-      setStatus(hasPortalConfig(portalSettings) ? 'Student identifiers saved.' : 'Student identifiers saved in sample data.');
-    }
     return updated;
   }
 
-  async function syncEditableDraftsBeforePrint() {
-    if (!selected) {
-      throw new Error('Select a student before printing.');
+  /** Saves every edited section of the selected student. Returns the saved record. */
+  async function saveAllDrafts(): Promise<StudentRecord> {
+    if (!selected) throw new Error('Choose a student first.');
+    if (!draftsReady) throw new Error('The card details are still loading. Try again.');
+    if (dirty.any && !operatorCanEditPortal) {
+      throw new Error(`${READ_ONLY_MESSAGE} Undo the edits to print.`);
     }
-
-    if (hasDirtyEditableDrafts(selected) && !operatorCanEditPortal) {
-      throw new Error('Save or discard edited fields before printing. This account cannot update portal records.');
-    }
-
     let current = selected;
-    if (hasDirtyNameDraft(current)) {
-      current = await saveNameDraftToPortal(current, true);
-    }
-    if (hasDirtyGuardianDraft(current)) {
-      current = await saveGuardianDraftToPortal(current, true);
-    }
-    if (hasDirtyIdDraft(current)) {
-      current = await saveIdDraftToPortal(current, true);
-    }
+    if (dirty.name) current = await saveNameDraftToPortal(current);
+    if (dirty.guardian) current = await saveGuardianDraftToPortal(current);
+    if (dirty.ids) current = await saveIdDraftToPortal(current);
     return current;
   }
 
-  async function buildCardDocuments(studentOverride?: StudentRecord | null) {
+  function discardDrafts() {
+    if (!selected) return;
+    setNameDraft({ firstName: selected.firstName || '', lastName: selected.lastName || '' });
+    setGuardianDraft(selected.guardian);
+    setIdDraft({ lrn: selected.lrn || '', esc: selected.esc || '' });
+    setPrintFields({ includeLrn: Boolean(selected.lrn), includeEsc: Boolean(selected.esc) });
+  }
+
+  function savedDetail() {
+    return liveMode ? 'Saved to the portal.' : 'Saved in sample data only (Sample mode).';
+  }
+
+  async function handleSaveAll() {
+    if (!selected || !dirty.any || busy) return;
+    if (!operatorCanEditPortal) {
+      setFlow({ tone: 'error', title: READ_ONLY_MESSAGE, studentId: selected.id });
+      return;
+    }
+    setBusy(true);
+    setFlow({ tone: 'working', title: 'Saving changes…', studentId: selected.id });
+    try {
+      await saveAllDrafts();
+      setFlow({ tone: 'success', title: 'Changes saved.', detail: savedDetail(), studentId: selected.id });
+    } catch (error) {
+      setFlow({ tone: 'error', title: 'Changes weren’t saved.', detail: errorText(error, 'Try again.'), studentId: selected.id });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buildCardDocuments(studentOverride?: StudentRecord | null): Promise<CardDocuments> {
     const studentToRender = studentOverride
       ? printableStudent(studentOverride, nameDraft, guardianDraft, idDraft, printFields)
       : previewStudent;
 
     if (!studentToRender || !qrDataUrl) {
-      throw new Error('Select a student before printing.');
+      throw new Error('Choose a student before printing.');
     }
 
     const [front, back, idCardFontFaceCss] = await Promise.all([
@@ -467,71 +719,9 @@ export default function App() {
 
     const assets = { front, back, idCardFontFaceCss };
     return {
-      // Printer copy: back rotated 180 degrees for the card flip.
       printHtml: renderPrintHtml(studentForPrint, qrDataUrl, assets),
-      // Portal Documents copy: both sides upright.
       archiveHtml: renderArchiveHtml(studentForPrint, qrDataUrl, assets)
     };
-  }
-
-  async function handleSaveName() {
-    if (!selected || !nameDraft) {
-      return;
-    }
-
-    if (!operatorCanEditPortal) {
-      setStatus('This account can print IDs but cannot update portal records.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await saveNameDraftToPortal(selected);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not save student name.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleSaveGuardian() {
-    if (!selected || !guardianDraft) {
-      return;
-    }
-
-    if (!operatorCanEditPortal) {
-      setStatus('This account can print IDs but cannot update portal records.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await saveGuardianDraftToPortal(selected);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not save guardian contact.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleSaveIdDetails() {
-    if (!selected || !idDraft) {
-      return;
-    }
-
-    if (!operatorCanEditPortal) {
-      setStatus('This account can print IDs but cannot update portal records.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await saveIdDraftToPortal(selected);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not save student identifiers.');
-    } finally {
-      setBusy(false);
-    }
   }
 
   function handleLrnChange(value: string) {
@@ -545,113 +735,310 @@ export default function App() {
   }
 
   async function handleApprovePhoto(photoDataUrl: string) {
-    if (!selected) {
-      return;
-    }
-
+    if (!selected) return;
     if (!operatorCanEditPortal) {
-      setStatus('This account can print IDs but cannot update portal records.');
+      setPhotoError(READ_ONLY_MESSAGE);
       return;
     }
-
     setBusy(true);
     try {
+      setPhotoError('');
       const updated = await updatePhoto(selected.id, photoDataUrl, portalSettings, operatorSession?.token);
       setStudents((current) => replaceStudent(current, updated));
       setSelected(updated);
       setCaptureOpen(false);
-      setStatus(hasPortalConfig(portalSettings) ? 'Approved photo saved.' : 'Approved photo saved in sample data.');
+      setFlow({
+        tone: 'success',
+        title: 'Photo saved.',
+        detail: liveMode ? 'The new photo is on the student’s portal record.' : 'Saved in sample data only (Sample mode).',
+        studentId: updated.id
+      });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not update student photo.');
+      setPhotoError(`The photo wasn’t saved. ${errorText(error, 'Try again.')}`);
     } finally {
       setBusy(false);
     }
   }
 
-  async function handlePrint() {
+  async function uploadArchive(archiveHtml: string, studentId: string) {
+    if (!window.gtPrint?.captureCardPngs) {
+      throw new Error('This app version cannot capture the printed ID for upload.');
+    }
+    // The archive copy is upright on both sides (renderArchiveHtml), not the rotated print copy.
+    const images = await window.gtPrint.captureCardPngs(archiveHtml);
+    await uploadIdCardDocuments(studentId, { front: images.front, back: images.back }, portalSettings, operatorSession?.token);
+  }
+
+  function askBeforeDuplicate(job: PrintJob, title: string, body: ReactNode, testId: string) {
+    setConfirm({
+      title,
+      body,
+      testId,
+      // The safe answer comes first, is the filled button and gets focus: a stray Enter never prints.
+      actions: [
+        { label: 'Don’t print', kind: 'primary', onClick: () => setConfirm(null) },
+        {
+          label: (
+            <>
+              <Printer size={18} aria-hidden="true" /> Print another card
+            </>
+          ),
+          kind: 'secondary',
+          onClick: () => {
+            setConfirm(null);
+            void runPrintJob({ ...job, confirmed: true });
+          }
+        }
+      ]
+    });
+  }
+
+  /**
+   * Save edits → print → file the upright PNGs in the portal. A ref lock stops key-repeat or double
+   * clicks from sending two jobs. A student already printed this session asks first.
+   */
+  async function runPrintJob(job: PrintJob) {
+    if (printingRef.current) return;
     if (liveMode && !hasValidOperatorSession(operatorSession)) {
-      setStatus('Sign in before printing.');
+      setFlow({ tone: 'error', title: 'Sign in before printing.' });
+      return;
+    }
+    if (!job.reprint && !canPrint) {
+      printButtonRef.current?.focus();
+      return;
+    }
+    if (!job.reprint && !job.confirmed && selected && printedAt[selected.id]) {
+      askBeforeDuplicate(
+        job,
+        `Print ${shortName(previewStudent || selected)}’s ID again?`,
+        <p>A card for this student was already printed at {timeOf(printedAt[selected.id])}. Print another only if that card was lost or wrong.</p>,
+        'confirm-duplicate'
+      );
       return;
     }
 
+    printingRef.current = true;
     setBusy(true);
+    const jobStudentId = job.reprint ? job.reprint.studentId : selected?.id;
+    retryJobRef.current = job.reprint ? { reprint: job.reprint } : { studentId: selected?.id };
+    const steps: FlowSteps = {
+      save: !job.reprint && dirty.any ? 'active' : 'skipped',
+      print: 'waiting',
+      upload: liveMode && !(job.reprint && job.reprint.uploaded) ? 'waiting' : 'skipped'
+    };
+    const who = job.reprint ? job.reprint.name : selected ? shortName(previewStudent || selected) : '';
+    if (!job.reprint && selected) lastPrintedShortRef.current = initialName(previewStudent || selected);
+    const update = (patch: Partial<FlowSteps>, state: Omit<FlowState, 'steps' | 'studentId'>) => {
+      Object.assign(steps, patch);
+      setFlow({ ...state, steps: { ...steps }, studentId: jobStudentId });
+    };
+    const failSkip = () => (steps.upload === 'waiting' ? 'skipped' : steps.upload);
+
     try {
-      setStatus('Checking edited fields...');
-      const syncedStudent = await syncEditableDraftsBeforePrint();
-      const { printHtml: html, archiveHtml } = await buildCardDocuments(syncedStudent);
-      if (window.gtPrint) {
-        setStatus(silentPrint ? 'Sending print job...' : 'Opening Windows print dialog...');
-        const result = await window.gtPrint.printCard(html, {
-          deviceName: selectedPrinter || undefined,
-          silent: silentPrint
-        });
-        if (result.ok) {
-          const printerName = result.printerName || selectedPrinter || 'selected printer';
-          const printStatus = result.mode === 'dialog' ? `Print dialog completed for ${printerName}.` : `Print job sent to ${printerName}.`;
-          if (hasPortalConfig(portalSettings)) {
-            try {
-              if (!window.gtPrint.captureCardPngs) {
-                throw new Error('This app version cannot capture the printed ID for upload.');
-              }
-              setStatus(`${printStatus} Uploading ID front/back to Documents...`);
-              const images = await window.gtPrint.captureCardPngs(archiveHtml);
-              await uploadIdCardDocuments(
-                syncedStudent.id,
-                { front: images.front, back: images.back },
-                portalSettings,
-                operatorSession?.token
-              );
-              setStatus(`${printStatus} ID front/back uploaded to student Documents.`);
-            } catch (uploadError) {
-              const message = uploadError instanceof Error ? uploadError.message : 'Document upload failed.';
-              setStatus(`${printStatus} Document upload failed: ${message}`);
-            }
-          } else {
-            setStatus(printStatus);
-          }
-        } else {
-          setStatus(result.error || 'Print failed.');
-        }
+      let docs: CardDocuments;
+      let studentId: string;
+      let admissionNo: string;
+      if (job.reprint) {
+        docs = { printHtml: job.reprint.printHtml, archiveHtml: job.reprint.archiveHtml };
+        studentId = job.reprint.studentId;
+        admissionNo = job.reprint.admissionNo;
       } else {
+        if (steps.save === 'active') update({}, { tone: 'working', title: 'Saving changes…' });
+        let synced: StudentRecord;
+        try {
+          synced = await saveAllDrafts();
+        } catch (error) {
+          update({ save: 'failed' }, {
+            tone: 'error',
+            title: 'Changes weren’t saved, so nothing was printed.',
+            detail: errorText(error, 'Try again.'),
+            retry: 'print'
+          });
+          return;
+        }
+        if (steps.save === 'active') steps.save = 'done';
+        docs = await buildCardDocuments(synced);
+        studentId = synced.id;
+        admissionNo = synced.admissionNo;
+      }
+
+      if (!window.gtPrint) {
+        update({ print: 'active' }, { tone: 'working', title: 'Opening the browser print dialog…' });
         const printWindow = window.open('', '_blank', 'width=720,height=960');
         if (!printWindow) {
-          throw new Error('Popup blocked. Use Electron or allow popups for browser fallback.');
+          update({ print: 'failed', upload: failSkip() }, { tone: 'error', title: 'The print window was blocked.', detail: 'Use the desktop app, or allow pop-ups.', retry: 'print' });
+          return;
         }
-        printWindow.document.write(html);
+        printWindow.document.write(docs.printHtml);
         printWindow.document.close();
         printWindow.focus();
         setTimeout(() => printWindow.print(), 350);
-        setStatus('Opened browser print dialog.');
+        update({ print: 'done', upload: 'skipped' }, { tone: 'success', title: 'Opened the browser print dialog.' });
+        return;
+      }
+
+      update(
+        { print: 'active' },
+        { tone: 'working', title: silentPrint ? `Printing ${who}’s ID…` : `Printing ${who}’s ID. Confirm in the Windows print dialog.` }
+      );
+      let result;
+      try {
+        result = await window.gtPrint.printCard(docs.printHtml, { deviceName: selectedPrinter || undefined, silent: silentPrint });
+      } catch (error) {
+        retryJobRef.current.mayHavePrinted = true;
+        update({ print: 'failed', upload: failSkip() }, { tone: 'error', ...friendlyPrintError(errorText(error, ''), who), retry: 'print' });
+        return;
+      }
+      if (!result.ok) {
+        if (result.canceled) {
+          update({ print: 'failed', upload: failSkip() }, {
+            tone: 'warning',
+            title: `Printing ${who}’s ID was cancelled.`,
+            detail: 'Nothing was printed.',
+            retry: 'print'
+          });
+        } else {
+          retryJobRef.current.mayHavePrinted = true;
+          update({ print: 'failed', upload: failSkip() }, { tone: 'error', ...friendlyPrintError(result.error || result.failureReason, who), retry: 'print' });
+        }
+        return;
+      }
+
+      const printedTime = Date.now();
+      const printerName = result.printerName || selectedPrinter || 'the printer';
+      const printSummary = `Printed ${who}’s ID on ${printerName} at ${timeOf(printedTime)}.`;
+      const record: LastPrint = {
+        ...docs,
+        studentId,
+        name: who,
+        shortLabel: job.reprint ? job.reprint.shortLabel : lastPrintedShortRef.current || who,
+        admissionNo,
+        uploaded: job.reprint?.uploaded ?? false,
+        at: printedTime
+      };
+      setLastPrint(record);
+      setPrintedToday((current) => {
+        const next = { at: { ...current.at, [studentId]: printedTime }, names: { ...current.names, [studentId]: who } };
+        writePrintedToday(next);
+        return next;
+      });
+      lastJobRef.current = { archiveHtml: docs.archiveHtml, studentId, printSummary };
+
+      // Print and next: clear the search for the next student, keep this one on screen.
+      if (!job.reprint) {
+        if (query) {
+          keepSelectionRef.current = true;
+          setQuery('');
+        }
+        window.setTimeout(() => searchRef.current?.focus(), 0);
+      }
+
+      if (steps.upload !== 'waiting') {
+        update({ print: 'done' }, {
+          tone: 'success',
+          title: printSummary,
+          detail: liveMode ? 'Already filed in the portal earlier.' : 'Sample mode: the archive copy is not uploaded. Type the next name.'
+        });
+        return;
+      }
+
+      update({ print: 'done', upload: 'active' }, { tone: 'working', title: printSummary, detail: 'Filing the front and back in the student’s portal Documents…' });
+      try {
+        await uploadArchive(docs.archiveHtml, studentId);
+        setLastPrint({ ...record, uploaded: true });
+        update({ upload: 'done' }, { tone: 'success', title: printSummary, detail: 'Front and back filed in the student’s portal Documents. Type the next name.' });
+      } catch (uploadError) {
+        update({ upload: 'failed' }, {
+          tone: 'warning',
+          ...friendlyUploadError(bridgeErrorMessage(uploadError, '')),
+          title: `${who}’s card printed, but the archive copy didn’t upload.`,
+          retry: 'upload'
+        });
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not print card.');
+      update({ print: steps.print === 'active' ? 'failed' : steps.print }, {
+        tone: 'error',
+        title: `${who}’s ID didn’t print.`,
+        detail: errorText(error, 'Try again.'),
+        retry: 'print'
+      });
     } finally {
+      printingRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  function retryPrint() {
+    const retry = retryJobRef.current;
+    const job: PrintJob = retry.reprint ? { reprint: retry.reprint } : {};
+    if (retry.mayHavePrinted) {
+      askBeforeDuplicate(
+        { ...job },
+        'Check the printer first',
+        <p>
+          The printer reported a problem, but a card may still have come out (for example after a jam). If a good card came out,
+          don’t print another.
+        </p>,
+        'confirm-jam'
+      );
+      return;
+    }
+    void runPrintJob({ ...job, confirmed: true });
+  }
+
+  async function retryUpload() {
+    const job = lastJobRef.current;
+    if (!job || printingRef.current) return;
+    printingRef.current = true;
+    setBusy(true);
+    const steps: FlowSteps = { save: 'skipped', print: 'done', upload: 'active' };
+    setFlow({ tone: 'working', title: job.printSummary, detail: 'Trying the upload again…', steps, studentId: job.studentId });
+    try {
+      await uploadArchive(job.archiveHtml, job.studentId);
+      setLastPrint((current) => (current && current.studentId === job.studentId ? { ...current, uploaded: true } : current));
+      setFlow({
+        tone: 'success',
+        title: job.printSummary,
+        detail: 'Front and back filed in the student’s portal Documents.',
+        steps: { ...steps, upload: 'done' },
+        studentId: job.studentId
+      });
+    } catch (error) {
+      setFlow({
+        tone: 'warning',
+        ...friendlyUploadError(bridgeErrorMessage(error, '')),
+        retry: 'upload',
+        steps: { ...steps, upload: 'failed' },
+        studentId: job.studentId
+      });
+    } finally {
+      printingRef.current = false;
       setBusy(false);
     }
   }
 
   async function handleSavePdf() {
     if (liveMode && !hasValidOperatorSession(operatorSession)) {
-      setStatus('Sign in before saving.');
+      setFlow({ tone: 'error', title: 'Sign in before saving.' });
       return;
     }
-
+    const studentId = selected?.id;
     setBusy(true);
+    setFlow({ tone: 'working', title: 'Making the PDF…', studentId });
     try {
-      const { printHtml: html } = await buildCardDocuments();
-      if (!window.gtPrint) {
-        throw new Error('Save PDF is available in the desktop app.');
-      }
-      const result = await window.gtPrint.saveCardPdf(html);
+      // As before: the PDF shows the card as previewed, including unsaved edits, without saving them.
+      const { printHtml } = await buildCardDocuments();
+      if (!window.gtPrint) throw new Error('Save PDF is available in the desktop app.');
+      const result = await window.gtPrint.saveCardPdf(printHtml);
       if (result.ok) {
-        setStatus(`Saved PDF: ${result.filePath}`);
+        setFlow({ tone: 'success', title: 'PDF saved.', detail: result.filePath, studentId });
       } else if (result.canceled) {
-        setStatus('Save PDF canceled.');
+        setFlow({ tone: 'neutral', title: 'PDF not saved.', detail: 'You closed the save window.', studentId });
       } else {
-        setStatus(result.error || 'Could not save PDF.');
+        setFlow({ tone: 'error', title: 'The PDF wasn’t saved.', detail: result.error || 'Try again.', studentId });
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not save PDF.');
+      setFlow({ tone: 'error', title: 'The PDF wasn’t saved.', detail: errorText(error, 'Try again.'), studentId });
     } finally {
       setBusy(false);
     }
@@ -660,8 +1047,8 @@ export default function App() {
   function handleRefreshStudents() {
     void refreshDeviceStatus();
     setStudentPage(1);
+    setListError('');
     setRefreshCount((value) => value + 1);
-    setStatus('Refreshing students...');
   }
 
   function handleLoadMoreStudents() {
@@ -670,21 +1057,54 @@ export default function App() {
     }
   }
 
+  function selectStudent(student: StudentRecord) {
+    if (selected && student.id === selected.id) return;
+    if (selected && dirty.any) {
+      setPendingSwitch(student);
+      return;
+    }
+    setSelected(student);
+  }
+
+  async function resolveSwitch(action: 'save' | 'discard' | 'stay') {
+    const target = pendingSwitch;
+    if (!target) return;
+    if (action === 'stay') {
+      setPendingSwitch(null);
+      searchRef.current?.focus();
+      return;
+    }
+    if (action === 'save') {
+      setBusy(true);
+      try {
+        await saveAllDrafts();
+      } catch (error) {
+        setFlow({ tone: 'error', title: 'Changes weren’t saved.', detail: errorText(error, 'Try again.'), studentId: selected?.id });
+        setBusy(false);
+        setPendingSwitch(null);
+        return;
+      }
+      setBusy(false);
+    }
+    setPendingSwitch(null);
+    setSelected(target);
+    searchRef.current?.focus();
+  }
+
   async function handleOperatorLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoginBusy(true);
-    setStatus('Signing in...');
+    setLoginError('');
     try {
       const session = await loginOperator(portalSettings, loginDraft);
       saveOperatorSession(session);
       setOperatorSession(session);
       setLoginDraft({ username: '', password: '' });
       setRefreshCount((value) => value + 1);
-      setStatus(`Signed in as ${session.name}.`);
     } catch (error) {
       clearOperatorSession();
       setOperatorSession(null);
-      setStatus(error instanceof Error ? error.message : 'Could not sign in.');
+      setLoginError(bridgeErrorMessage(error, 'Could not sign in. Check your email and password.'));
     } finally {
       setLoginBusy(false);
     }
@@ -695,905 +1115,704 @@ export default function App() {
     setOperatorSession(null);
     setStudents([]);
     setSelected(null);
-    setStatus('Signed out.');
+    setLastPrint(null);
+    lastJobRef.current = null;
+    setFlow(idleFlow(liveMode));
   }
+
+  function closeSetup() {
+    writeSetupSeen();
+    setSetupOpen(false);
+    setSetupFromApp(false);
+  }
+
+  function openSetupFromApp() {
+    setSetupFromApp(true);
+    setSetupOpen(true);
+  }
+
+  function cancelSetup() {
+    setSetupOpen(false);
+    setSetupFromApp(false);
+    // Back to the button that opened it.
+    window.setTimeout(() => setupTriggerRef.current?.focus(), 0);
+  }
+
+  // Keyboard: Ctrl/Cmd+P prints, Ctrl/Cmd+S saves, Ctrl/Cmd+F or "/" finds.
+  const keyActions = useRef({ print: () => {}, save: () => {} });
+  keyActions.current = {
+    print: () => {
+      if (busy) return;
+      // Typed but the search has not caught up: wait for it, then print its first match.
+      if (!searchSettled) setPendingAction('print');
+      else void runPrintJob({});
+    },
+    save: () => void handleSaveAll()
+  };
+  const modalOpen = captureOpen || Boolean(pendingSwitch) || Boolean(confirm) || setupOpen;
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (modalOpen) return;
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (mod && key === 'p') {
+        event.preventDefault();
+        if (!event.repeat) keyActions.current.print();
+      } else if (mod && key === 's') {
+        event.preventDefault();
+        if (!event.repeat) keyActions.current.save();
+      } else if ((mod && key === 'f') || (key === '/' && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [modalOpen]);
+
+  // Printer popover: focus trap, Esc and click outside close it, focus returns to its button.
+  useFocusTrap(printerPopoverRef, printerOpen, () => setPrinterOpen(false));
+  useEffect(() => {
+    if (!printerOpen) return;
+    function onDown(event: MouseEvent) {
+      const target = event.target as Node;
+      if (!printerPopoverRef.current?.contains(target) && !printerButtonRef.current?.contains(target)) setPrinterOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [printerOpen]);
+
+  useEffect(() => {
+    // The search turned up another student while this one has unsaved edits: the operator must
+    // answer the switch question first, so the waiting print is dropped, never run on this student.
+    if (pendingAction && pendingSwitch) {
+      setPendingAction(null);
+      return;
+    }
+    // Wait for the search, the new student's edit fields and their QR code before acting.
+    if (!pendingAction || !searchSettled || (selected && (!draftsReady || !qrDataUrl))) return;
+    const action = pendingAction;
+    setPendingAction(null);
+    if (action === 'print') void runPrintJob({});
+    else printButtonRef.current?.focus();
+    // runPrintJob reads this render's state, which now holds the settled search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAction, pendingSwitch, searchSettled, draftsReady, qrDataUrl]);
+
+  // Unsaved edits: ask before the window closes.
+  useEffect(() => {
+    if (!dirty.any) return;
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty.any]);
+
+  // Show the back automatically when something on the back needs attention.
+  const backNeedsLook = fit.guardianName || fit.guardianNameSmall || fit.guardianAddress || fit.guardianPhone;
+  useEffect(() => {
+    setPreviewSide(backNeedsLook ? 'back' : 'front');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backNeedsLook, selected?.id]);
+
+  const handleFit = useCallback((report: FitReport) => {
+    setFit((current) => ((Object.keys(report) as Array<keyof FitReport>).some((key) => report[key] !== current[key]) ? report : current));
+  }, []);
 
   if (!deviceChecked) {
     return (
-      <main className="login-shell">
-        <div className="status-line">{status}</div>
+      <main className="center-shell" aria-busy="true">
+        <p className="center-card-foot">Checking this station’s setup…</p>
       </main>
+    );
+  }
+
+  if (setupOpen && deviceBridge) {
+    return (
+      <DeviceSetup
+        status={() => deviceBridge.status()}
+        configure={(input) => deviceBridge.configure(input)}
+        clear={() => deviceBridge.clear()}
+        errorMessage={(error) => bridgeErrorMessage(error, '')}
+        onChanged={handleDeviceChanged}
+        onClose={() => closeSetup()}
+        onCancel={setupFromApp ? cancelSetup : undefined}
+      />
     );
   }
 
   if (!operatorReady) {
     return (
-      <main className="login-shell">
-        <form className="login-card" onSubmit={handleOperatorLogin}>
-          <div className="brand-lockup">
-            <div className="brand-mark">GT</div>
-            <div>
-              <strong>GTIS ID Print Station</strong>
-              <span>Sign in to continue</span>
-            </div>
-          </div>
-          <Field
-            label="Portal Email"
-            value={loginDraft.username}
-            onChange={(username) => setLoginDraft({ ...loginDraft, username })}
-          />
-          <Field
-            label="Password"
-            type="password"
-            value={loginDraft.password}
-            onChange={(password) => setLoginDraft({ ...loginDraft, password })}
-          />
-          <button className="button primary wide" disabled={loginBusy}>
-            <LogIn size={17} /> {loginBusy ? 'Signing in...' : 'Sign In'}
-          </button>
-          <div className="status-line">{status}</div>
-          <DeviceSetupPanel status={deviceStatus} onChanged={handleDeviceChanged} />
-        </form>
-      </main>
+      <LockScreen
+        username={loginDraft.username}
+        password={loginDraft.password}
+        onChange={setLoginDraft}
+        onSubmit={handleOperatorLogin}
+        busy={loginBusy}
+        error={loginError}
+        portalHost={hostOf(portalSettings.baseUrl)}
+        onDeviceSetup={deviceBridge ? openSetupFromApp : undefined}
+      />
     );
   }
 
+  const printerLabel = selectedPrinter
+    ? printers.find((printer) => printer.name === selectedPrinter)?.displayName || selectedPrinter
+    : 'Windows print dialog';
+  const readOnly = !operatorCanEditPortal;
+  const bindRef = (key: FieldKey) => (el: HTMLInputElement | HTMLTextAreaElement | null) => {
+    fieldRefs.current[key] = el;
+  };
+
+  // What the strip shows, most important first: running job or result needing action, unsaved
+  // edits, blockers, no student, then the last result for this student.
+  // While a print or upload failure shows, Try again is the main action and Print ID is outlined.
+  const printErrorShowing = Boolean(flow.retry) && flow.tone !== 'working';
+  let stripFlow: FlowState = flow;
+  let stripMode: 'flow' | 'dirty' | 'blocked' = 'flow';
+  if (flow.tone === 'working' || flow.retry) {
+    stripFlow = flow;
+  } else if (dirty.any) {
+    stripMode = 'dirty';
+    stripFlow =
+      selected && blockers.length
+        ? {
+            tone: 'warning',
+            title: 'Unsaved changes. Not ready to print yet.',
+            detail: `${blockers.map((blocker) => blocker.label).join(' · ')}.`
+          }
+        : { tone: 'warning', title: 'Unsaved changes.', detail: 'Print ID saves them first.' };
+  } else if (pendingAction === 'print') {
+    stripFlow = { tone: 'working', title: `Finding “${query.trim()}”…`, detail: 'Prints the first match as soon as the search finishes.' };
+  } else if (selected && blockers.length) {
+    stripMode = 'blocked';
+    stripFlow = {
+      tone: 'warning',
+      title: 'Not ready to print yet.',
+      detail: `${blockers.map((blocker) => blocker.label).join(' · ')}. Fix these in the card details.`
+    };
+  } else if (!selected) {
+    stripFlow = { tone: 'neutral', title: 'Nothing to print yet.' };
+  }
+
+  const checks: Array<{ key: string; label: string; ok: boolean; warn?: boolean; fix?: () => void; fixLabel?: string }> = selected
+    ? [
+        {
+          key: 'photo',
+          label: selected.photoUrl ? 'Photo on file' : 'Photo needed',
+          ok: Boolean(selected.photoUrl),
+          fix: operatorCanEditPortal ? () => setCaptureOpen(true) : undefined,
+          fixLabel: 'Add photo'
+        },
+        {
+          key: 'name',
+          label: blockers.find((b) => b.key === 'name')?.label || 'Name on the card',
+          ok: !blockers.some((b) => b.key === 'name'),
+          fix: blockers.find((b) => b.key === 'name')?.onFix,
+          fixLabel: 'Fix'
+        },
+        {
+          key: 'contact',
+          label: blockers.find((b) => b.key === 'contact')?.label || 'Emergency contact complete',
+          ok: !blockers.some((b) => b.key === 'contact'),
+          fix: blockers.find((b) => b.key === 'contact')?.onFix,
+          fixLabel: 'Fix'
+        },
+        { key: 'qr', label: `QR code for student no. ${selected.admissionNo}`, ok: Boolean(qrDataUrl) },
+        { key: 'fit', label: fitWarnings.length ? 'Some text won’t fit the card' : 'All text fits the card', ok: true, warn: fitWarnings.length > 0 },
+        {
+          key: 'printed',
+          label: printedAt[selected.id] ? `Printed today at ${timeOf(printedAt[selected.id])}` : 'Not printed yet today',
+          ok: true,
+          warn: false
+        }
+      ]
+    : [];
+
   return (
-    <main className="app-shell">
-      <aside className="search-rail">
-        <div className="brand-lockup">
-          <div className="brand-mark">GT</div>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">GT</div>
           <div>
-            <strong>GTIS ID Print Station</strong>
-            <span>2026-2027 ISO CR80</span>
+            <strong>ID Print Station</strong>
+            <span>Good Tree International School · 2026–2027 cards</span>
           </div>
         </div>
-
-        <label className="search-box">
-          <Search size={18} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search name or admission no."
-          />
-        </label>
-        <div className="search-meta">
-          <span className="student-count">{students.length ? `${students.length} student${students.length === 1 ? '' : 's'}` : 'No students'}</span>
-          <button className="icon-text-button" onClick={handleRefreshStudents} disabled={loadingStudents}>
-            <RefreshCw size={15} /> Refresh
+        <ModeBadge mode={stationMode} portalHost={hostOf(portalSettings.baseUrl)} />
+        {deviceBridge && !liveMode ? (
+          <button ref={setupTriggerRef} type="button" className="button ghost" onClick={openSetupFromApp}>
+            <Settings size={18} aria-hidden="true" /> Device setup
           </button>
-        </div>
-
-        <div className="student-list">
-          {students.map((student) => (
-            <button
-              key={student.id}
-              className={`student-row ${selected?.id === student.id ? 'is-active' : ''}`}
-              onClick={() => setSelected(student)}
-            >
-              <img
-                src={student.photoUrl || ''}
-                alt=""
-                className={`student-thumb ${student.photoUrl ? '' : 'is-empty'}`}
-              />
-              <span>
-                <strong>{studentFullName(student)}</strong>
-                <small>
-                  {student.admissionNo} - {studentGradeLine(student)}
-                </small>
-              </span>
+        ) : null}
+        <div className="topbar-spacer" />
+        {lastPrint ? (
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => void runPrintJob({ reprint: lastPrint })}
+            disabled={busy}
+            title={`Print ${lastPrint.name}’s card again, exactly as printed at ${timeOf(lastPrint.at)}`}
+          >
+            <RotateCcw size={18} aria-hidden="true" />
+            <span className="reprint-label">
+              Reprint last: <strong>{lastPrint.shortLabel}</strong>
+            </span>
+          </button>
+        ) : null}
+        {liveMode && operatorSession ? (
+          <div className="operator">
+            <UserRound size={18} aria-hidden="true" />
+            <span className="operator-name" title={operatorSession.name}>
+              {operatorSession.name}
+            </span>
+            <button type="button" className="button ghost" onClick={handleOperatorLogout} disabled={busy}>
+              <LogOut size={18} aria-hidden="true" /> Sign out
             </button>
-          ))}
-          {loadingStudents ? <div className="student-list-note">Loading students...</div> : null}
-          {!loadingStudents && students.length === 0 ? <div className="student-list-note">No students found.</div> : null}
-          {!loadingStudents && hasMoreStudents ? (
-            <button className="button secondary wide" onClick={handleLoadMoreStudents}>
-              Load More
-            </button>
-          ) : null}
-        </div>
-      </aside>
+          </div>
+        ) : null}
+      </header>
 
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <h1>Student ID Printing</h1>
-            <p>
-              {selected ? `${studentFullName(selected)} - ${selected.admissionNo}` : 'Select a student.'}
-              {liveMode && operatorSession ? ` - Signed in: ${operatorSession.name}` : ''}
-            </p>
-            {!liveMode ? (
-              <p>
-                <strong>Sample mode</strong> - not connected to the portal. Changes stay on this computer.{' '}
-                {deviceStatus?.message ? `${deviceStatus.message} ` : ''}
-                {deviceStatus ? (
-                  <button type="button" className="icon-text-button" onClick={() => setDeviceSetupOpen((open) => !open)}>
-                    {deviceSetupOpen ? 'Hide device setup' : 'Device setup'}
+      <main className="workspace">
+        <StudentList
+          ref={searchRef}
+          query={query}
+          onQueryChange={(value) => {
+            keepSelectionRef.current = false;
+            setPendingAction(null);
+            setQuery(value);
+          }}
+          students={students}
+          selectedId={selected?.id || null}
+          onSelect={selectStudent}
+          onConfirm={() => {
+            if (searchSettled) printButtonRef.current?.focus();
+            else setPendingAction('focus-print');
+          }}
+          loading={loadingStudents}
+          error={listError}
+          hasMore={hasMoreStudents}
+          onLoadMore={handleLoadMoreStudents}
+          onRefresh={handleRefreshStudents}
+          printedAt={printedAt}
+          searchPending={!searchSettled}
+        />
+
+        <section className="zone editor-zone" aria-label="Card details">
+          {selected && nameDraft && guardianDraft && idDraft ? (
+            <>
+              <header className="editor-head">
+                {selected.photoUrl ? (
+                  <img src={selected.photoUrl} alt={`Current photo of ${studentFullName(selected)}`} className="photo-current" />
+                ) : (
+                  <span className="photo-current is-empty" aria-hidden="true">
+                    <UserRound size={28} />
+                  </span>
+                )}
+                <div className="editor-title">
+                  <h1 title={studentFullName(selected)}>{studentFullName(selected)}</h1>
+                  <p>
+                    {studentGradeLine(selected)} · No. {selected.admissionNo}
+                  </p>
+                  <div className="editor-row">
+                  <button type="button" className="button secondary small" onClick={() => setCaptureOpen(true)} disabled={readOnly || busy}>
+                    {selected.photoUrl ? <Camera size={16} aria-hidden="true" /> : <ImagePlus size={16} aria-hidden="true" />}
+                    {selected.photoUrl ? 'Replace photo' : 'Add photo'}
                   </button>
-                ) : null}
-              </p>
-            ) : null}
+                {dirty.any ? (
+                  <span className="pill is-dirty">
+                    <Pencil size={16} aria-hidden="true" /> Unsaved
+                  </span>
+                ) : blockers.length === 0 && fitWarnings.length ? (
+                  <span className="pill is-dirty">
+                    <AlertTriangle size={16} aria-hidden="true" /> Ready, check fit
+                  </span>
+                ) : blockers.length === 0 ? (
+                  <span className="pill is-ok">
+                    <CheckCircle2 size={16} aria-hidden="true" /> Ready
+                  </span>
+                ) : (
+                  <span className="pill is-blocked">
+                    <AlertCircle size={16} aria-hidden="true" /> {blockers.length} to fix
+                  </span>
+                )}
+                  </div>
+                </div>
+              </header>
+              {readOnly ? <p className="readonly-note">{READ_ONLY_MESSAGE} You can still choose what shows on the card.</p> : null}
 
-          </div>
-          <div className="topbar-actions">
-            {liveMode ? (
-              <button className="button secondary" onClick={handleOperatorLogout} disabled={busy}>
-                <LogOut size={17} /> Sign Out
-              </button>
-            ) : null}
-            <button className="button secondary" onClick={handleSavePdf} disabled={!selected || busy}>
-              <FileDown size={17} /> Save PDF
-            </button>
-            <button className="button primary" onClick={handlePrint} disabled={!canPrint || busy}>
-              <Printer size={17} /> Print ID
-            </button>
-          </div>
-        </header>
-
-        <div className="content-grid">
-          <section className="preview-panel">
-            {previewStudent && qrDataUrl ? (
-              <CardPreview
-                student={previewStudent}
-                qrDataUrl={qrDataUrl}
-              />
-            ) : (
-              <div className="empty-state">Select a student to preview the ID card.</div>
-            )}
-          </section>
-
-          <aside className="control-panel">
-            {!liveMode && deviceSetupOpen ? (
-              <section className="panel-section">
-                <DeviceSetupPanel status={deviceStatus} onChanged={handleDeviceChanged} />
-              </section>
-            ) : null}
-            {selected && readiness && nameDraft && guardianDraft && idDraft ? (
-              <>
-                <section className="panel-section">
-                  <h2>Readiness</h2>
-                  <CheckList
-                    items={[
-                      ['Current enrollment', readiness.enrolled],
-                      ['Photo approved', readiness.photo],
-                      ['Emergency contact', readiness.guardian],
-                      ['Admission QR', readiness.qr],
-                      ['ISO CR80 output', readiness.cr80]
-                    ]}
-                  />
-                </section>
-
-                <section className="panel-section">
-                  <h2>Photo</h2>
-                  <div className="photo-row">
-                    <img
-                      src={selected.photoUrl || ''}
-                      alt=""
-                      className={`photo-current ${selected.photoUrl ? '' : 'is-empty'}`}
+              <div className="editor-scroll">
+                <section className="editor-section" aria-labelledby="sec-name" onFocus={() => setPreviewSide('front')}>
+                  <h2 id="sec-name">
+                    Name on the card <small>front</small>
+                  </h2>
+                  <div className="field-pair names">
+                    <Field
+                      ref={bindRef('firstName')}
+                      label="First name"
+                      value={nameDraft.firstName}
+                      onChange={(value) => setNameDraft({ ...nameDraft, firstName: value })}
+                      issue={issues.firstName}
+                      dirty={cleanValue(nameDraft.firstName) !== cleanValue(selected.firstName)}
+                      disabled={readOnly}
                     />
-                    <button className="button secondary" onClick={() => setCaptureOpen(true)} disabled={!operatorCanEditPortal}>
-                      <Camera size={17} /> Capture Photo
-                    </button>
+                    <Field
+                      ref={bindRef('lastName')}
+                      label="Last name"
+                      value={nameDraft.lastName}
+                      onChange={(value) => setNameDraft({ ...nameDraft, lastName: value })}
+                      issue={issues.lastName}
+                      dirty={cleanValue(nameDraft.lastName) !== cleanValue(selected.lastName)}
+                      disabled={readOnly}
+                    />
                   </div>
                 </section>
 
-                <section className="panel-section">
-                  <h2>Student Name</h2>
+                <section className="editor-section" aria-labelledby="sec-contact" onFocus={() => setPreviewSide('back')}>
+                  <h2 id="sec-contact">
+                    Emergency contact <small>back</small>
+                  </h2>
+                  <div className="field-pair contact">
+                    <Field
+                      ref={bindRef('guardianName')}
+                      label={`Name${guardianDraft.relation ? ` (${guardianDraft.relation})` : ''}`}
+                      value={guardianDraft.name}
+                      onChange={(value) => setGuardianDraft({ ...guardianDraft, name: value })}
+                      issue={issues.guardianName}
+                      dirty={cleanValue(guardianDraft.name) !== cleanValue(selected.guardian.name)}
+                      disabled={readOnly}
+                    />
+                    <Field
+                      ref={bindRef('guardianPhone')}
+                      label="Phone"
+                      type="tel"
+                      inputMode="tel"
+                      value={guardianDraft.phone}
+                      onChange={(value) => setGuardianDraft({ ...guardianDraft, phone: value })}
+                      issue={issues.guardianPhone}
+                      dirty={cleanValue(guardianDraft.phone) !== cleanValue(selected.guardian.phone)}
+                      disabled={readOnly}
+                    />
+                  </div>
                   <Field
-                    label="First Name"
-                    value={nameDraft.firstName}
-                    onChange={(value) => setNameDraft({ ...nameDraft, firstName: value })}
-                  />
-                  <Field
-                    label="Last Name"
-                    value={nameDraft.lastName}
-                    onChange={(value) => setNameDraft({ ...nameDraft, lastName: value })}
-                  />
-                  <button className="button secondary wide" onClick={handleSaveName} disabled={busy || !operatorCanEditPortal}>
-                    <Save size={17} /> Save Student Name
-                  </button>
-                </section>
-
-                <section className="panel-section">
-                  <h2>Guardian Contact</h2>
-                  <Field
-                    label="Name"
-                    value={guardianDraft.name}
-                    onChange={(value) => setGuardianDraft({ ...guardianDraft, name: value })}
-                  />
-                  <Field
+                    ref={bindRef('guardianAddress')}
                     label="Address"
                     multiline
                     value={guardianDraft.address}
                     onChange={(value) => setGuardianDraft({ ...guardianDraft, address: value })}
+                    issue={issues.guardianAddress}
+                    dirty={cleanValue(guardianDraft.address) !== cleanValue(selected.guardian.address)}
+                    disabled={readOnly}
                   />
-                  <Field
-                    label="Phone"
-                    value={guardianDraft.phone}
-                    onChange={(value) => setGuardianDraft({ ...guardianDraft, phone: value })}
-                  />
-                  <button className="button secondary wide" onClick={handleSaveGuardian} disabled={busy || !operatorCanEditPortal}>
-                    <Save size={17} /> Save Guardian Contact
-                  </button>
                 </section>
 
-                <section className="panel-section">
-                  <h2>Student Identifiers</h2>
-                  <Field
-                    label="LRN"
-                    value={idDraft.lrn}
-                    onChange={handleLrnChange}
-                  />
-                  <label className="toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={printFields.includeLrn}
-                      disabled={!idDraft.lrn.trim()}
-                      onChange={(event) => setPrintFields({ ...printFields, includeLrn: event.target.checked })}
+                <section className="editor-section" aria-labelledby="sec-ids" onFocus={() => setPreviewSide('front')}>
+                  <h2 id="sec-ids">
+                    ID numbers <small>front</small>
+                  </h2>
+                  <div className="field-pair">
+                    <IdField
+                      label="LRN"
+                      value={idDraft.lrn}
+                      onChange={handleLrnChange}
+                      include={printFields.includeLrn}
+                      onInclude={(includeLrn) => setPrintFields({ ...printFields, includeLrn })}
+                      issue={issues.lrn}
+                      dirty={cleanValue(idDraft.lrn) !== cleanValue(selected.lrn)}
+                      disabled={readOnly}
                     />
-                    <span>Print LRN</span>
-                  </label>
-                  <Field
-                    label="ESC"
-                    value={idDraft.esc}
-                    onChange={handleEscChange}
-                  />
-                  <label className="toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={printFields.includeEsc}
-                      disabled={!idDraft.esc.trim()}
-                      onChange={(event) => setPrintFields({ ...printFields, includeEsc: event.target.checked })}
+                    <IdField
+                      label="ESC"
+                      value={idDraft.esc}
+                      onChange={handleEscChange}
+                      include={printFields.includeEsc}
+                      onInclude={(includeEsc) => setPrintFields({ ...printFields, includeEsc })}
+                      issue={issues.esc}
+                      dirty={cleanValue(idDraft.esc) !== cleanValue(selected.esc)}
+                      disabled={readOnly}
                     />
-                    <span>Print ESC</span>
-                  </label>
-                  <button className="button secondary wide" onClick={handleSaveIdDetails} disabled={busy || !operatorCanEditPortal}>
-                    <Save size={17} /> Save Student Identifiers
-                  </button>
+                  </div>
                 </section>
 
-                <section className="panel-section">
-                  <h2>Printer</h2>
-                  <label className="field">
-                    <span>Device</span>
-                    <select value={selectedPrinter} onChange={(event) => setSelectedPrinter(event.target.value)}>
-                      <option value="">System print dialog</option>
-                      {printers.map((printer) => (
-                        <option key={printer.name} value={printer.name}>
-                          {printer.displayName || printer.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={silentPrint}
-                      onChange={(event) => setSilentPrint(event.target.checked)}
-                    />
-                    <span>Silent print on Windows NUC</span>
-                  </label>
+                <section className="editor-section readiness" aria-labelledby="sec-ready">
+                  <h2 id="sec-ready">Ready to print?</h2>
+                  <ul className="readiness-list">
+                    {checks.map((check) => (
+                      <li key={check.key} className={check.ok ? (check.warn ? 'is-warn' : 'is-ok') : 'is-blocked'}>
+                        {check.ok ? (
+                          check.warn ? (
+                            <AlertTriangle size={16} aria-hidden="true" />
+                          ) : check.key === 'printed' && !printedAt[selected.id] ? (
+                            <Circle size={16} aria-hidden="true" />
+                          ) : (
+                            <CheckCircle2 size={16} aria-hidden="true" />
+                          )
+                        ) : (
+                          <AlertCircle size={16} aria-hidden="true" />
+                        )}
+                        <span>
+                          {check.label}
+                          <span className="sr-only">{check.ok ? (check.warn ? ': check' : ': OK') : ': needs fixing'}</span>
+                        </span>
+                        {!check.ok && check.fix ? (
+                          <button type="button" className="button secondary small" onClick={check.fix}>
+                            {check.fixLabel}
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
                 </section>
-              </>
-            ) : null}
 
-            <div className="status-line">{busy ? 'Working...' : status}</div>
-          </aside>
-        </div>
-      </section>
+                {Object.keys(printedAt).length ? (
+                  <section className="editor-section printed-log" aria-labelledby="sec-log">
+                    <h2 id="sec-log">
+                      Printed today <small>{Object.keys(printedAt).length}</small>
+                    </h2>
+                    <ol>
+                      {Object.entries(printedAt)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 5)
+                        .map(([id, at]) => (
+                          <li key={id}>
+                            <span>{printedToday.names[id] || id}</span>
+                            <time>{timeOf(at)}</time>
+                          </li>
+                        ))}
+                    </ol>
+                  </section>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <div className="zone-empty">
+              <UserRound size={32} aria-hidden="true" />
+              <strong>{loadingStudents ? 'Loading students…' : 'No student chosen'}</strong>
+              <span>Pick a student from the list to check their card.</span>
+            </div>
+          )}
+        </section>
+
+        <section className="zone preview-zone" aria-label="Card preview and printing">
+          {previewStudent ? (
+            <CardPreview
+              title="This is how the card will look"
+              subtitle="Updates as you type."
+              student={previewStudent}
+              qrDataUrl={qrDataUrl}
+              onFit={handleFit}
+              preferSide={previewPref.side}
+              preferKey={previewPref.n}
+              photoPlaceholder={!previewStudent.photoUrl}
+            />
+          ) : (
+            <>
+            <header className="preview-head">
+              <h2>This is how the card will look</h2>
+            </header>
+            <div className="preview-stage">
+              <div className="zone-empty">
+                <Printer size={32} aria-hidden="true" />
+                <strong>The card appears here</strong>
+                <span>Choose a student to see the front and back.</span>
+              </div>
+            </div>
+            </>
+          )}
+
+          <div className="print-panel">
+            <div className="print-actions">
+              <div className="printer-picker">
+                <button
+                  ref={printerButtonRef}
+                  type="button"
+                  className="button secondary"
+                  aria-expanded={printerOpen}
+                  aria-controls="printer-popover"
+                  aria-label={`Printer settings. Printer: ${printerLabel}${silentPrint ? ', without dialog' : ''}`}
+                  title={`Printer: ${printerLabel}`}
+                  onClick={() => setPrinterOpen((open) => !open)}
+                >
+                  <Printer size={18} aria-hidden="true" />
+                  <span className="printer-name">{printerLabel}</span>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+                {printerOpen ? (
+                  <div id="printer-popover" ref={printerPopoverRef} className="popover" role="dialog" aria-label="Printer settings">
+                    <label className="field">
+                      <span className="field-label-row">
+                        <span>Printer</span>
+                      </span>
+                      <select value={selectedPrinter} onChange={(event) => setSelectedPrinter(event.target.value)}>
+                        <option value="">Windows print dialog (choose each time)</option>
+                        {printers.map((printer) => (
+                          <option key={printer.name} value={printer.name}>
+                            {printer.displayName || printer.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {printers.length === 0 ? (
+                      <p className="field-message is-warning">
+                        <AlertTriangle size={15} aria-hidden="true" /> No printers found. Check the card printer is on and its driver is installed.
+                      </p>
+                    ) : null}
+                    <label className="toggle-row">
+                      <input type="checkbox" checked={silentPrint} onChange={(event) => setSilentPrint(event.target.checked)} />
+                      <span>
+                        Print without the Windows dialog
+                        <small>Turn on only after test cards print correctly.</small>
+                      </span>
+                    </label>
+                    <button type="button" className="button secondary" onClick={() => setPrinterOpen(false)}>
+                      Done
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleSavePdf()}
+                disabled={!selected || busy || !qrDataUrl}
+                aria-label="Save PDF"
+                title="Save the card as a PDF"
+              >
+                <FileDown size={18} aria-hidden="true" /> <span className="btn-label-collapse">Save PDF</span>
+              </button>
+              <button
+                ref={printButtonRef}
+                type="button"
+                className={`button xl ${printErrorShowing ? 'secondary' : 'primary'}`}
+                onClick={() => void runPrintJob({})}
+                disabled={!canPrint || busy}
+                aria-keyshortcuts="Control+P"
+                aria-describedby={stripMode !== 'flow' ? 'print-status' : undefined}
+              >
+                <Printer size={22} aria-hidden="true" /> Print ID
+                <kbd className="on-primary">Ctrl+P</kbd>
+              </button>
+            </div>
+
+            <StatusStrip
+              compactSteps={stripFlow.tone !== 'working'}
+              flow={stripFlow}
+              retryDisabled={busy}
+              retryPrimary={printErrorShowing}
+              onRetry={flow.retry === 'upload' ? () => void retryUpload() : flow.retry === 'print' ? retryPrint : undefined}
+              actions={
+                stripMode === 'dirty' ? (
+                  <>
+                    <button type="button" className="button secondary" onClick={() => void handleSaveAll()} disabled={busy || readOnly} aria-keyshortcuts="Control+S">
+                      <Save size={16} aria-hidden="true" /> Save <kbd>Ctrl+S</kbd>
+                    </button>
+                    <button type="button" className="button ghost" onClick={discardDrafts} disabled={busy}>
+                      <Undo2 size={16} aria-hidden="true" /> Discard
+                    </button>
+                  </>
+                ) : undefined
+              }
+            >
+              {stripMode === 'blocked' && fitWarnings.length ? (
+                <p className="fit-note">
+                  <AlertTriangle size={15} aria-hidden="true" /> Also check: {fitWarnings.map((key) => fitLabels[key]).join(', ')} won’t fit well.
+                </p>
+              ) : stripMode === 'flow' && fitWarnings.length && selected && (flow.tone === 'neutral' || flow.tone === 'success') ? (
+                <p className="fit-note">
+                  <AlertTriangle size={15} aria-hidden="true" /> Check before printing: {fitWarnings.map((key) => fitLabels[key]).join(', ')} won’t fit well.
+                </p>
+              ) : null}
+            </StatusStrip>
+          </div>
+        </section>
+      </main>
 
       {captureOpen && selected ? (
-        <CaptureModal
+        <PhotoEditor
           student={previewStudent || selected}
           qrDataUrl={qrDataUrl}
           portalBaseUrl={portalSettings.baseUrl}
-          onApprove={handleApprovePhoto}
-          onClose={() => setCaptureOpen(false)}
+          saving={busy}
+          saveError={photoError}
+          onApprove={(photo) => void handleApprovePhoto(photo)}
+          onClose={() => {
+            setCaptureOpen(false);
+            setPhotoError('');
+          }}
         />
       ) : null}
-    </main>
-  );
-}
 
-function CheckList({ items }: { items: Array<[string, boolean]> }) {
-  return (
-    <ul className="check-list">
-      {items.map(([label, ok]) => (
-        <li key={label} className={ok ? 'ok' : 'needs-work'}>
-          <CheckCircle2 size={16} />
-          <span>{label}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * Plain one-time device setup. The token goes straight to the main process,
- * is encrypted there, and nothing derived from it is ever shown again.
- */
-function DeviceSetupPanel({
-  status,
-  onChanged
-}: {
-  status: DeviceStatus | null;
-  onChanged: (status: DeviceStatus, message: string) => void;
-}) {
-  const [portalUrl, setPortalUrl] = useState(status?.portalUrl || 'https://portal.gtis.edu.ph');
-  const [token, setToken] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const device = window.gtPrint?.device;
-
-  if (!device || !status) {
-    return null;
-  }
-
-  let portalHost = status.portalUrl;
-  try {
-    portalHost = new URL(status.portalUrl).host;
-  } catch {
-    // Show the stored value as-is.
-  }
-
-  async function handleSave() {
-    if (!device) {
-      return;
-    }
-    setBusy(true);
-    setMessage('Checking the token with the portal...');
-    try {
-      const result = await device.configure({ portalUrl, token });
-      setToken('');
-      if (result.check === 'rejected') {
-        setMessage('The portal rejected this device token. Nothing was saved.');
-        return;
-      }
-      if (result.check !== 'accepted') {
-        setMessage('The portal could not confirm the token (check the internet connection). Nothing was saved; try again.');
-        return;
-      }
-      const text = 'Device set up. The portal accepted the token.';
-      setMessage(text);
-      onChanged(result, text);
-    } catch (error) {
-      setMessage(bridgeErrorMessage(error, 'Device setup failed.'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleClear() {
-    if (!device || !window.confirm('Remove the saved device token from this computer? The station returns to sample mode.')) {
-      return;
-    }
-    setBusy(true);
-    try {
-      const next = await device.clear();
-      setMessage('Device token removed.');
-      onChanged(next, 'Device token removed. Sample mode.');
-    } catch (error) {
-      setMessage(bridgeErrorMessage(error, 'Could not remove the device token.'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (status.configured) {
-    return (
-      <div className="device-setup">
-        <p>Portal: {portalHost}</p>
-        <button type="button" className="icon-text-button" onClick={handleClear} disabled={busy}>
-          Reset device setup
-        </button>
-        {message ? <p>{message}</p> : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="device-setup">
-      <h2>Device setup</h2>
-      <p>For school IT: enter the portal address and this station's device token once. It is stored encrypted on this computer.</p>
-      {status.message ? <p>{status.message}</p> : null}
-      {!status.encryptionAvailable ? (
-        <p>This computer cannot encrypt the token, so it cannot be saved here.</p>
+      {pendingSwitch && selected ? (
+        <ConfirmDialog
+          title={`Save changes to ${studentFullName(selected)}?`}
+          onCancel={() => void resolveSwitch('stay')}
+          testId="confirm-switch"
+          actions={[
+            {
+              label: (
+                <>
+                  <Save size={18} aria-hidden="true" /> Save and switch
+                </>
+              ),
+              kind: 'primary',
+              onClick: () => void resolveSwitch('save'),
+              disabled: busy || readOnly
+            },
+            { label: 'Discard changes', kind: 'secondary', onClick: () => void resolveSwitch('discard'), disabled: busy },
+            { label: 'Stay here', kind: 'ghost', onClick: () => void resolveSwitch('stay'), disabled: busy }
+          ]}
+        >
+          <p>You edited this student’s card details. Save them before opening {studentFullName(pendingSwitch)}, or discard them.</p>
+        </ConfirmDialog>
       ) : null}
-      <Field label="Portal address" value={portalUrl} onChange={setPortalUrl} />
-      <Field label="Device token" type="password" value={token} onChange={setToken} />
-      <button
-        type="button"
-        className="button secondary"
-        onClick={handleSave}
-        disabled={busy || !status.encryptionAvailable || !portalUrl.trim() || !token.trim()}
-      >
-        {busy ? 'Checking...' : 'Save device setup'}
-      </button>
-      {message ? <p>{message}</p> : null}
+
+      {confirm ? (
+        <ConfirmDialog title={confirm.title} onCancel={() => setConfirm(null)} actions={confirm.actions} testId={confirm.testId}>
+          {confirm.body}
+        </ConfirmDialog>
+      ) : null}
     </div>
   );
 }
 
-function Field({
+function IdField({
   label,
   value,
   onChange,
-  type = 'text',
-  multiline = false
+  include,
+  onInclude,
+  issue,
+  dirty,
+  disabled
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-  type?: string;
-  multiline?: boolean;
+  include: boolean;
+  onInclude: (include: boolean) => void;
+  issue?: FieldIssue;
+  dirty: boolean;
+  disabled: boolean;
 }) {
   return (
-    <label className="field">
-      <span>{label}</span>
-      {multiline ? (
-        <textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} />
-      ) : (
-        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
-      )}
-    </label>
+    <Field
+      label={label}
+      value={value}
+      onChange={onChange}
+      issue={issue}
+      dirty={dirty}
+      disabled={disabled}
+      inputMode="numeric"
+      labelAside={
+        <label className="inline-toggle" title="Only affects this print. The saved number is kept.">
+          <input type="checkbox" checked={include} disabled={!value.trim()} onChange={(event) => onInclude(event.target.checked)} />
+          <span className="label-long">Show on card</span>
+          <span className="label-short">Show</span>
+        </label>
+      }
+    />
   );
-}
-
-function CardPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
-  const idLines = studentIdentifierLines(student);
-  const lastName = studentLastNameLine(student);
-  const firstName = studentFirstNameLine(student);
-  const gradeLine = studentGradeLine(student);
-
-  return (
-    <div className="cards-wrap">
-      <div className="card-shell">
-        <CardPage background={FRONT_TEMPLATE}>
-          {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
-          <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
-          <div className="layer last-name-layer" style={previewLastNameStyle(lastName)}>
-            {lastName}
-          </div>
-          <div className="layer first-name-layer" style={previewFirstNameStyle(firstName)}>
-            {firstName}
-          </div>
-          <div className="layer grade-layer" style={previewGradeStyle(gradeLine)}>
-            {gradeLine}
-          </div>
-          {idLines.length ? (
-            <div className="layer ids-layer" style={cardLayers.ids}>
-              {idLines.map((line) => (
-                <div key={line}>{line}</div>
-              ))}
-            </div>
-          ) : null}
-        </CardPage>
-        <span>Front</span>
-      </div>
-
-      <div className="card-shell">
-        <CardPage background={BACK_TEMPLATE} rotated>
-          <div className="layer emergency-layer" style={cardLayers.emergency}>
-            <strong style={previewEmergencyNameStyle(student.guardian.name)}>{student.guardian.name}</strong>
-            <span style={previewEmergencyAddressStyle(student.guardian.address)}>{student.guardian.address}</span>
-            <b style={previewEmergencyPhoneStyle(student.guardian.phone)}>{student.guardian.phone}</b>
-          </div>
-        </CardPage>
-        <span>Back</span>
-      </div>
-    </div>
-  );
-}
-
-function CardPage({ background, children, rotated = false }: { background: string; children: React.ReactNode; rotated?: boolean }) {
-  return (
-    <div className="card-page">
-      <div className={`card-content${rotated ? ' card-content-rotated' : ''}`}>
-        <img src={background} className="card-bg" alt="" />
-        {children}
-      </div>
-    </div>
-  );
-}
-
-const PHOTO_OUTPUT_WIDTH = 860;
-const PHOTO_OUTPUT_HEIGHT = 996;
-const PHOTO_EDITOR_FRAME_WIDTH = 320;
-const PHOTO_EDITOR_FRAME_HEIGHT = 370;
-
-function CaptureModal({
-  student,
-  qrDataUrl,
-  portalBaseUrl,
-  onApprove,
-  onClose
-}: {
-  student: StudentRecord;
-  qrDataUrl: string;
-  portalBaseUrl: string;
-  onApprove: (photoDataUrl: string) => void;
-  onClose: () => void;
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [error, setError] = useState('');
-  const [cameraReady, setCameraReady] = useState(false);
-  const [rawCapture, setRawCapture] = useState('');
-  const [editedPreview, setEditedPreview] = useState('');
-  const [editorBusy, setEditorBusy] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [offsetX, setOffsetX] = useState(0);
-  const [offsetY, setOffsetY] = useState(0);
-  const [brightness, setBrightness] = useState(100);
-
-  useEffect(() => {
-    let active = true;
-    navigator.mediaDevices
-      ?.getUserMedia({
-        audio: false,
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user'
-        }
-      })
-      .then((stream) => {
-        if (!active) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        streamRef.current = stream;
-        setCameraReady(true);
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      })
-      .catch(() => {
-        setCameraReady(false);
-        setError('Camera is unavailable. Choose Photo still works.');
-      });
-
-    return () => {
-      active = false;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!rawCapture) {
-      setEditedPreview('');
-      setEditorBusy(false);
-      return;
-    }
-
-    let canceled = false;
-    setEditorBusy(true);
-    const timeout = window.setTimeout(() => {
-      renderCroppedPhoto(rawCapture, zoom, offsetX, offsetY, brightness)
-        .then((photo) => {
-          if (!canceled) {
-            setEditedPreview(photo);
-          }
-        })
-        .catch(() => {
-          if (!canceled) {
-            setError('Could not prepare this photo. Choose another image.');
-          }
-        })
-        .finally(() => {
-          if (!canceled) {
-            setEditorBusy(false);
-          }
-        });
-    }, 80);
-
-    return () => {
-      canceled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [rawCapture, zoom, offsetX, offsetY, brightness]);
-
-  const previewStudent = useMemo(
-    () => ({
-      ...student,
-      photoUrl: editedPreview || rawCapture || student.photoUrl || ''
-    }),
-    [editedPreview, rawCapture, student]
-  );
-
-  function resetEditor(source: string) {
-    setRawCapture(source);
-    setEditedPreview('');
-    setZoom(1);
-    setOffsetX(0);
-    setOffsetY(0);
-    setBrightness(100);
-  }
-
-  function captureFrame() {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-    const context = canvas.getContext('2d');
-    if (!context) {
-      return;
-    }
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    resetEditor(canvas.toDataURL('image/jpeg', 0.95));
-  }
-
-  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) {
-      return;
-    }
-
-    if (!file.type.startsWith('image/')) {
-      setError('Choose an image file.');
-      return;
-    }
-
-    try {
-      resetEditor(await fileToDataUrl(file));
-      setError('');
-    } catch {
-      setError('Could not load this photo.');
-    }
-  }
-
-  async function useCurrentPhoto() {
-    if (!student.photoUrl) {
-      return;
-    }
-
-    try {
-      resetEditor(await imageSourceToDataUrl(student.photoUrl, portalBaseUrl));
-      setError('');
-    } catch {
-      setError('Could not load the current portal photo for editing. Choose Photo instead.');
-    }
-  }
-
-  async function approve() {
-    if (!rawCapture) {
-      return;
-    }
-    const cropped = await renderCroppedPhoto(rawCapture, zoom, offsetX, offsetY, brightness);
-    onApprove(cropped);
-  }
-
-  return (
-    <div className="modal-backdrop">
-      <section className="capture-modal">
-        <header>
-          <div>
-            <h2>Photo Editor</h2>
-            <p>{studentFullName(student)}</p>
-          </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="capture-grid">
-          <div className="camera-box">
-            {rawCapture ? (
-              <div className="crop-frame">
-                <img
-                  src={rawCapture}
-                  alt=""
-                  style={{
-                    filter: `brightness(${brightness}%)`,
-                    transform: `translate(-50%, -50%) translate(${offsetX}px, ${offsetY}px) scale(${zoom})`
-                  }}
-                />
-                <div className="crop-guide">
-                  <div className="crop-head" />
-                  <div className="crop-shoulders" />
-                </div>
-              </div>
-            ) : (
-              <div className="video-frame">
-                <video ref={videoRef} autoPlay playsInline muted />
-                <div className="head-guide">
-                  <div className="head-oval" />
-                  <div className="shoulder-line" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="capture-id-preview">
-            <CaptureFrontPreview student={previewStudent} qrDataUrl={qrDataUrl} />
-            <span>{editorBusy ? 'Preparing...' : 'ID Preview'}</span>
-          </div>
-
-          <aside className="capture-controls">
-            {error ? <div className="warning">{error}</div> : null}
-            <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleUpload} />
-            <button className="button secondary wide" onClick={() => fileInputRef.current?.click()}>
-              <ImagePlus size={17} /> Choose Photo
-            </button>
-            {student.photoUrl ? (
-              <button className="button secondary wide" onClick={useCurrentPhoto}>
-                <RefreshCw size={17} /> Edit Current Photo
-              </button>
-            ) : null}
-            {rawCapture ? (
-              <>
-                <label className="field">
-                  <span>Zoom</span>
-                  <input
-                    type="range"
-                    min="1"
-                    max="2.4"
-                    step="0.05"
-                    value={zoom}
-                    onChange={(event) => setZoom(Number(event.target.value))}
-                  />
-                </label>
-                <label className="field">
-                  <span>Horizontal</span>
-                  <input
-                    type="range"
-                    min="-120"
-                    max="120"
-                    value={offsetX}
-                    onChange={(event) => setOffsetX(Number(event.target.value))}
-                  />
-                </label>
-                <label className="field">
-                  <span>Vertical</span>
-                  <input
-                    type="range"
-                    min="-120"
-                    max="120"
-                    value={offsetY}
-                    onChange={(event) => setOffsetY(Number(event.target.value))}
-                  />
-                </label>
-                <label className="field">
-                  <span>Brightness</span>
-                  <input
-                    type="range"
-                    min="70"
-                    max="130"
-                    value={brightness}
-                    onChange={(event) => setBrightness(Number(event.target.value))}
-                  />
-                </label>
-                <button className="button secondary wide" onClick={() => setRawCapture('')}>
-                  <RefreshCw size={17} /> Retake
-                </button>
-                <button className="button primary wide" onClick={approve} disabled={editorBusy}>
-                  <CheckCircle2 size={17} /> Save Photo
-                </button>
-              </>
-            ) : (
-              <button className="button primary wide" onClick={captureFrame} disabled={!cameraReady}>
-                <Camera size={17} /> Capture
-              </button>
-            )}
-          </aside>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function CaptureFrontPreview({ student, qrDataUrl }: { student: StudentRecord; qrDataUrl: string }) {
-  const lastName = studentLastNameLine(student);
-  const firstName = studentFirstNameLine(student);
-  const gradeLine = studentGradeLine(student);
-  const idLines = studentIdentifierLines(student);
-
-  return (
-    <CardPage background={FRONT_TEMPLATE}>
-      {student.photoUrl ? <img className="layer photo-layer" src={student.photoUrl} style={cardLayers.photo} /> : null}
-      <img className="layer qr-layer" src={qrDataUrl} style={cardLayers.qr} />
-      <div className="layer last-name-layer" style={previewLastNameStyle(lastName)}>
-        {lastName}
-      </div>
-      <div className="layer first-name-layer" style={previewFirstNameStyle(firstName)}>
-        {firstName}
-      </div>
-      <div className="layer grade-layer" style={previewGradeStyle(gradeLine)}>
-        {gradeLine}
-      </div>
-      {idLines.length ? (
-        <div className="layer ids-layer" style={cardLayers.ids}>
-          {idLines.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
-        </div>
-      ) : null}
-    </CardPage>
-  );
-}
-
-async function renderCroppedPhoto(source: string, zoom: number, offsetX: number, offsetY: number, brightness: number) {
-  const image = await loadImage(source);
-  const outputWidth = PHOTO_OUTPUT_WIDTH;
-  const outputHeight = PHOTO_OUTPUT_HEIGHT;
-  const canvas = document.createElement('canvas');
-  canvas.width = outputWidth;
-  canvas.height = outputHeight;
-
-  const context = canvas.getContext('2d');
-  if (!context) {
-    return source;
-  }
-
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, outputWidth, outputHeight);
-  context.filter = `brightness(${brightness}%)`;
-
-  const baseScale = Math.max(outputWidth / image.width, outputHeight / image.height);
-  const scale = baseScale * zoom;
-  const width = image.width * scale;
-  const height = image.height * scale;
-  const x = (outputWidth - width) / 2 + offsetX * (outputWidth / PHOTO_EDITOR_FRAME_WIDTH);
-  const y = (outputHeight - height) / 2 + offsetY * (outputHeight / PHOTO_EDITOR_FRAME_HEIGHT);
-
-  context.drawImage(image, x, y, width, height);
-  return canvas.toDataURL('image/jpeg', 0.94);
-}
-
-function fileToDataUrl(file: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Could not read image file.'));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function imageSourceToDataUrl(source: string, portalBaseUrl: string) {
-  if (source.startsWith('data:')) {
-    return source;
-  }
-
-  const url = resolveImageSource(source, portalBaseUrl);
-  if (window.gtPrint?.fetchImageDataUrl) {
-    try {
-      return await window.gtPrint.fetchImageDataUrl(url);
-    } catch {
-      throw new Error('Could not download image through the desktop app.');
-    }
-  }
-
-  const response = await fetch(url, { credentials: 'include' });
-  if (!response.ok) {
-    throw new Error('Could not fetch image.');
-  }
-  const blob = await response.blob();
-  if (!blob.type.startsWith('image/')) {
-    throw new Error('Fetched file is not an image.');
-  }
-  return fileToDataUrl(blob);
-}
-
-function resolveImageSource(source: string, portalBaseUrl: string) {
-  if (/^https?:\/\//i.test(source)) {
-    return source;
-  }
-
-  const base = portalBaseUrl.trim() || window.location.href;
-  return new URL(source, base).toString();
-}
-
-function loadImage(source: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Could not load captured photo.'));
-    image.src = source;
-  });
 }

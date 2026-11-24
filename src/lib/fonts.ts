@@ -13,13 +13,17 @@ const OPTIONAL_FONT_FILES = [
 let fontDataPromise: Promise<{ dataUrl: string; format: string } | null> | null = null;
 let browserFontPromise: Promise<boolean> | null = null;
 
+/** A missing file can come back as the app's HTML page (dev server fallback); that is not a font. */
+function looksLikeFont(dataUrl: string) {
+  return /^data:(font\/|application\/(font|x-font|octet-stream|vnd\.ms-opentype))/i.test(dataUrl);
+}
+
 async function loadOptionalFontData() {
   for (const file of OPTIONAL_FONT_FILES) {
     try {
-      return {
-        dataUrl: await publicAssetToDataUrl(file.path),
-        format: file.format
-      };
+      const dataUrl = await publicAssetToDataUrl(file.path);
+      if (!looksLikeFont(dataUrl)) continue;
+      return { dataUrl, format: file.format };
     } catch {
       continue;
     }
@@ -47,7 +51,11 @@ export async function loadOptionalIdCardFont() {
       style: 'normal',
       weight: '700'
     });
-    await face.load();
+    try {
+      await face.load();
+    } catch {
+      return false;
+    }
     document.fonts.add(face);
     return true;
   });

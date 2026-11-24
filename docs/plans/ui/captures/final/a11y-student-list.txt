@@ -1,0 +1,13 @@
+- region "Students":
+  - text: Find a student
+  - combobox "Find a student" [expanded]: bamba
+  - button "Clear search": ×
+  - paragraph: ↑↓ choose · Enter open · Ctrl+P print
+  - text: 1 student
+  - checkbox "Hide printed (1 today)"
+  - text: Hide printed (1 today)
+  - button "Refresh students": Refresh
+  - listbox "Search results":
+    - option "Jetto Morris R. Bamba 2026001 · Grade 12 - Faith" [selected]:
+      - strong: Jetto Morris R. Bamba
+      - text: 2026001 · Grade 12 - Faith
