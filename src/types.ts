@@ -29,10 +29,13 @@ export interface StudentRecord {
   esc?: string;
 }
 
+/**
+ * Renderer view of the portal connection. Holds no secret.
+ * live = real portal with staff sign-in; otherwise sample data.
+ */
 export interface PortalSettings {
   baseUrl: string;
-  token: string;
-  useMock: boolean;
+  live: boolean;
 }
 
 export interface OperatorSession {
@@ -72,6 +75,34 @@ export interface PrintResult {
   failureReason?: string;
 }
 
+export interface PortalInfo {
+  /** Fixed portal: https://portal.gtis.edu.ph, or preportal when the station runs with GTIS_IDPRINT_PORTAL=preportal. */
+  portalUrl: string;
+  /** live by default; sample only when the station runs with GTIS_IDPRINT_SAMPLE=1. */
+  mode: 'live' | 'sample';
+}
+
+export interface PortalBridgeRequest {
+  method: 'GET' | 'POST';
+  /** Must start with /idprintapi/. */
+  path: string;
+  body?: unknown;
+  operatorToken?: string;
+}
+
+export interface PortalBridgeResponse {
+  ok: boolean;
+  /** HTTP status, or 0 when the portal could not be reached. */
+  status: number;
+  payload: unknown;
+}
+
+export interface PortalBridge {
+  info: () => Promise<PortalInfo>;
+  /** Sends only the operator header (when given); there is no device token. */
+  request: (req: PortalBridgeRequest) => Promise<PortalBridgeResponse>;
+}
+
 export interface PrintStationBridge {
   listPrinters: () => Promise<PrinterInfo[]>;
   printCard: (
@@ -82,6 +113,7 @@ export interface PrintStationBridge {
   captureCardPngs?: (html: string) => Promise<{ front: string; back: string; dpi: number }>;
   fetchImageDataUrl?: (url: string) => Promise<string>;
   readAssetDataUrl?: (assetPath: string) => Promise<string | null>;
+  portal?: PortalBridge;
 }
 
 declare global {

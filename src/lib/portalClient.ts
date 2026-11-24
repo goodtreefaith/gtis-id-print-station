@@ -11,49 +11,45 @@ import type {
 import { studentFullName } from './student';
 
 let students = [...mockStudents];
-const STORAGE_KEY = 'gtis-id-print-station.portal-settings';
+// Old builds kept a device token in this localStorage key. The device token is
+// retired; remove it so no token lingers in the renderer profile.
+const LEGACY_SETTINGS_STORAGE_KEY = 'gtis-id-print-station.portal-settings';
 const OPERATOR_STORAGE_KEY = 'gtis-id-print-station.operator-session';
-const DEFAULT_PORTAL_URL = 'https://portal.gtis.edu.ph';
+export const DEFAULT_PORTAL_URL = 'https://portal.gtis.edu.ph';
 const DEFAULT_LIMIT = 20;
 
-interface ViteImportMeta extends ImportMeta {
-  env?: Record<string, string | undefined>;
-}
-
-function envPortalSettings(): PortalSettings {
-  const env = ((import.meta as ViteImportMeta).env || {});
-  const token = (env.VITE_GTIS_IDPRINT_API_TOKEN || '').trim();
-  const useMockValue = (env.VITE_GTIS_IDPRINT_USE_MOCK || '').trim().toLowerCase();
-
-  return {
-    baseUrl: (env.VITE_GTIS_PORTAL_URL || DEFAULT_PORTAL_URL).trim(),
-    token,
-    useMock: useMockValue ? ['1', 'true', 'yes'].includes(useMockValue) : token === ''
-  };
-}
-
-export function loadPortalSettings(): PortalSettings {
-  const fallback = envPortalSettings();
-
-  if (fallback.token) {
-    return fallback;
-  }
-
+export function clearLegacyPortalSettings() {
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (!saved) {
-      return fallback;
-    }
-
-    const parsed = { ...fallback, ...JSON.parse(saved) };
-    return parsed.token ? parsed : fallback;
+    window.localStorage.removeItem(LEGACY_SETTINGS_STORAGE_KEY);
   } catch {
-    return fallback;
+    // Storage unavailable; nothing to clear.
   }
+}
+
+clearLegacyPortalSettings();
+
+/** Used when there is no desktop bridge (browser-only dev) or sample mode. */
+export const SAMPLE_PORTAL_SETTINGS: PortalSettings = { baseUrl: DEFAULT_PORTAL_URL, live: false };
+
+/** Live unless the desktop app was started in sample mode (GTIS_IDPRINT_SAMPLE=1). */
+export async function loadPortalSettings(): Promise<PortalSettings> {
+  const portal = window.gtPrint?.portal;
+  if (!portal) {
+    return SAMPLE_PORTAL_SETTINGS;
+  }
+
+  const info = await portal.info();
+  return { baseUrl: info.portalUrl, live: info.mode === 'live' };
 }
 
 export function hasPortalConfig(settings: PortalSettings) {
-  return Boolean(settings.baseUrl.trim() && settings.token.trim() && !settings.useMock);
+  return Boolean(settings.live && settings.baseUrl.trim());
+}
+
+/** Strips Electron's "Error invoking remote method ..." prefix from IPC errors. */
+export function bridgeErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : '';
+  return message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') || fallback;
 }
 
 export function loadOperatorSession(): OperatorSession | null {
@@ -345,29 +341,30 @@ async function searchPortalStudents(
 }
 
 async function portalFetch<T>(
-  settings: PortalSettings,
+  _settings: PortalSettings,
   path: string,
-  init: RequestInit = {},
+  init: { method?: 'GET' | 'POST'; body?: string } = {},
   operatorToken?: string
 ) {
-  const base = settings.baseUrl.trim().replace(/\/+$/, '') + '/';
-  const url = new URL(path.replace(/^\/+/, ''), base);
-  const response = await fetch(url.toString(), {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.token.trim()}`,
-      // Some portal hosts drop the Authorization header before PHP sees it.
-      'X-GTIS-IDPRINT-TOKEN': settings.token.trim(),
-      ...(operatorToken ? { 'X-GTIS-IDPRINT-OPERATOR': operatorToken } : {}),
-      ...(init.headers || {})
-    }
+  const bridge = window.gtPrint?.portal;
+  if (!bridge) {
+    throw new Error('Live portal mode needs the desktop app.');
+  }
+
+  // The main process sends this to the fixed portal with only the operator header.
+  const response = await bridge.request({
+    method: init.method === 'POST' ? 'POST' : 'GET',
+    path,
+    body: init.body === undefined ? undefined : JSON.parse(init.body),
+    operatorToken: operatorToken || undefined
   });
 
-  const payload = await response.json().catch(() => null);
+  const payload = response.payload as (T & { status?: boolean; message?: string }) | null;
   if (!response.ok || !payload?.status) {
-    throw new Error(payload?.message || `Portal request failed with HTTP ${response.status}.`);
+    throw new Error(
+      payload?.message ||
+        (response.status === 0 ? 'Could not reach the portal.' : `Portal request failed with HTTP ${response.status}.`)
+    );
   }
 
   return payload as T & { status: boolean };

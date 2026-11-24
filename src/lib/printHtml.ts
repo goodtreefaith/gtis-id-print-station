@@ -52,11 +52,9 @@ function emergencyPhoneFontMm(phone: string) {
   return previewPxToPrintMm(emergencyPhoneFontPx(phone));
 }
 
-export function renderPrintHtml(
-  student: StudentRecord,
-  qrDataUrl: string,
-  assets: { front: string; back: string; idCardFontFaceCss?: string }
-) {
+type CardAssets = { front: string; back: string; idCardFontFaceCss?: string };
+
+function cardParts(student: StudentRecord, qrDataUrl: string, assets: CardAssets) {
   const lastName = studentLastNameLine(student);
   const firstName = studentFirstNameLine(student);
   const gradeLine = studentGradeLine(student);
@@ -64,13 +62,8 @@ export function renderPrintHtml(
     .map((line) => `<div>${escapeHtml(line)}</div>`)
     .join('');
 
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>GTIS ID Card ${escapeHtml(student.admissionNo)}</title>
-  <style>
-    ${assets.idCardFontFaceCss || ''}
+  const title = `<title>GTIS ID Card ${escapeHtml(student.admissionNo)}</title>`;
+  const styles = `    ${assets.idCardFontFaceCss || ''}
     @page { size: 53.98mm 85.60mm; margin: 0; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvetica, sans-serif; }
@@ -92,29 +85,87 @@ export function renderPrintHtml(
     .emergency { color: #063f23; display: grid; grid-template-rows: auto auto auto; gap: 1mm; align-content: center; justify-items: center; text-align: center; padding: 0 1.7mm; }
     .emergency-name { font-size: ${emergencyNameFontMm(student.guardian.name)}; line-height: 1; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
     .emergency-address { font-size: ${emergencyAddressFontMm(student.guardian.address)}; line-height: 1.02; max-width: 100%; display: -webkit-box; overflow: hidden; overflow-wrap: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .emergency-phone { font-size: ${emergencyPhoneFontMm(student.guardian.phone)}; line-height: 1; }
-  </style>
-</head>
-<body>
-  <section class="page">
-    <div class="page-content">
-      <img class="bg" src="${assets.front}" />
+    .emergency-phone { font-size: ${emergencyPhoneFontMm(student.guardian.phone)}; line-height: 1; }`;
+  const front = `      <img class="bg" src="${assets.front}" />
       ${student.photoUrl ? `<img class="layer photo" style="${pos(cardLayers.photo)}" src="${student.photoUrl}" />` : ''}
       <img class="layer qr" style="${pos(cardLayers.qr)}" src="${qrDataUrl}" />
       <div class="layer last-name" style="${pos(cardLayers.lastName)}">${escapeHtml(lastName)}</div>
       <div class="layer first-name" style="${pos(cardLayers.firstName)}">${escapeHtml(firstName)}</div>
       <div class="layer grade" style="${pos(cardLayers.grade)}">${escapeHtml(gradeLine)}</div>
-      ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}
-    </div>
-  </section>
-  <section class="page">
-    <div class="page-content rotate-180">
-      <img class="bg" src="${assets.back}" />
+      ${idLines ? `<div class="layer ids" style="${pos(cardLayers.ids)}">${idLines}</div>` : ''}`;
+  const back = `      <img class="bg" src="${assets.back}" />
       <div class="layer emergency" style="${pos(cardLayers.emergency)}">
         <div class="emergency-name">${escapeHtml(student.guardian.name)}</div>
         <div class="emergency-address">${escapeHtml(student.guardian.address)}</div>
         <div class="emergency-phone">${escapeHtml(student.guardian.phone)}</div>
-      </div>
+      </div>`;
+
+  return { title, styles, front, back };
+}
+
+/**
+ * Print document for the card printer. The back is rotated 180 degrees on
+ * purpose: the printer flips the card. This output must stay byte-identical
+ * (see scripts/fixtures/print-html-*.html and npm run test:archive).
+ */
+export function renderPrintHtml(student: StudentRecord, qrDataUrl: string, assets: CardAssets) {
+  const { title, styles, front, back } = cardParts(student, qrDataUrl, assets);
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  ${title}
+  <style>
+${styles}
+  </style>
+</head>
+<body>
+  <section class="page">
+    <div class="page-content">
+${front}
+    </div>
+  </section>
+  <section class="page">
+    <div class="page-content rotate-180">
+${back}
+    </div>
+  </section>
+</body>
+</html>`;
+}
+
+/**
+ * Archive document for the portal's Documents upload. Both sides are upright
+ * CR80 pages; the desktop app shows one side at a time (body[data-show]),
+ * scales it with CSS zoom and captures it at 600 DPI. Never send this to the
+ * printer.
+ */
+export function renderArchiveHtml(student: StudentRecord, qrDataUrl: string, assets: CardAssets) {
+  const { title, styles, front, back } = cardParts(student, qrDataUrl, assets);
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  ${title}
+  <style>
+${styles}
+    html, body { overflow: hidden; }
+    .archive-page { page-break-after: auto; }
+    body[data-show="front"] .archive-page[data-side="back"],
+    body[data-show="back"] .archive-page[data-side="front"] { display: none; }
+  </style>
+</head>
+<body data-show="front">
+  <section class="page archive-page" data-side="front">
+    <div class="page-content">
+${front}
+    </div>
+  </section>
+  <section class="page archive-page" data-side="back">
+    <div class="page-content">
+${back}
     </div>
   </section>
 </body>

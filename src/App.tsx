@@ -33,7 +33,7 @@ import {
 } from './lib/cardText';
 import { loadOptionalIdCardFont, optionalIdCardFontFaceCss } from './lib/fonts';
 import { cardLayers } from './lib/layout';
-import { renderPrintHtml } from './lib/printHtml';
+import { renderArchiveHtml, renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
 import {
   readinessFor,
@@ -48,6 +48,7 @@ import {
   hasPortalConfig,
   hasValidOperatorSession,
   loadPortalSettings,
+  SAMPLE_PORTAL_SETTINGS,
   loadOperatorSession,
   loginOperator,
   saveOperatorSession,
@@ -152,23 +153,31 @@ export default function App() {
   const [selectedPrinter, setSelectedPrinter] = useState('');
   const [silentPrint, setSilentPrint] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [portalSettings, setPortalSettings] = useState<PortalSettings>(() => loadPortalSettings());
+  const [portalSettings, setPortalSettings] = useState<PortalSettings>(SAMPLE_PORTAL_SETTINGS);
+  const [portalChecked, setPortalChecked] = useState(false);
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => loadOperatorSession());
   const [loginDraft, setLoginDraft] = useState({ username: '', password: '' });
   const [loginBusy, setLoginBusy] = useState(false);
-  const [status, setStatus] = useState(() =>
-    hasPortalConfig(loadPortalSettings())
-      ? 'Sign in with your portal account.'
-      : 'Sample data loaded for local testing.'
-  );
+  const [status, setStatus] = useState('Starting...');
   const liveMode = hasPortalConfig(portalSettings);
-  const operatorReady = !liveMode || hasValidOperatorSession(operatorSession);
+  const operatorReady = portalChecked && (!liveMode || hasValidOperatorSession(operatorSession));
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
   const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
 
   useEffect(() => {
     void loadOptionalIdCardFont();
+    void refreshPortalSettings();
   }, []);
+
+  async function refreshPortalSettings() {
+    try {
+      setPortalSettings(await loadPortalSettings());
+    } catch {
+      setStatus('Could not start the portal connection. Restart the app.');
+      return;
+    }
+    setPortalChecked(true);
+  }
 
   useEffect(() => {
     if (!operatorReady) {
@@ -417,7 +426,7 @@ export default function App() {
     return current;
   }
 
-  async function buildPrintHtml(studentOverride?: StudentRecord | null) {
+  async function buildCardDocuments(studentOverride?: StudentRecord | null) {
     const studentToRender = studentOverride
       ? printableStudent(studentOverride, nameDraft, guardianDraft, idDraft, printFields)
       : previewStudent;
@@ -436,7 +445,13 @@ export default function App() {
       studentForPrint.photoUrl = await imageSourceToDataUrl(studentForPrint.photoUrl, portalSettings.baseUrl);
     }
 
-    return renderPrintHtml(studentForPrint, qrDataUrl, { front, back, idCardFontFaceCss });
+    const assets = { front, back, idCardFontFaceCss };
+    return {
+      // Printer copy: back rotated 180 degrees for the card flip.
+      printHtml: renderPrintHtml(studentForPrint, qrDataUrl, assets),
+      // Portal Documents copy: both sides upright.
+      archiveHtml: renderArchiveHtml(studentForPrint, qrDataUrl, assets)
+    };
   }
 
   async function handleSaveName() {
@@ -543,7 +558,7 @@ export default function App() {
     try {
       setStatus('Checking edited fields...');
       const syncedStudent = await syncEditableDraftsBeforePrint();
-      const html = await buildPrintHtml(syncedStudent);
+      const { printHtml: html, archiveHtml } = await buildCardDocuments(syncedStudent);
       if (window.gtPrint) {
         setStatus(silentPrint ? 'Sending print job...' : 'Opening Windows print dialog...');
         const result = await window.gtPrint.printCard(html, {
@@ -559,7 +574,7 @@ export default function App() {
                 throw new Error('This app version cannot capture the printed ID for upload.');
               }
               setStatus(`${printStatus} Uploading ID front/back to Documents...`);
-              const images = await window.gtPrint.captureCardPngs(html);
+              const images = await window.gtPrint.captureCardPngs(archiveHtml);
               await uploadIdCardDocuments(
                 syncedStudent.id,
                 { front: images.front, back: images.back },
@@ -603,7 +618,7 @@ export default function App() {
 
     setBusy(true);
     try {
-      const html = await buildPrintHtml();
+      const { printHtml: html } = await buildCardDocuments();
       if (!window.gtPrint) {
         throw new Error('Save PDF is available in the desktop app.');
       }
@@ -623,7 +638,7 @@ export default function App() {
   }
 
   function handleRefreshStudents() {
-    setPortalSettings(loadPortalSettings());
+    void refreshPortalSettings();
     setStudentPage(1);
     setRefreshCount((value) => value + 1);
     setStatus('Refreshing students...');
@@ -663,6 +678,14 @@ export default function App() {
     setStatus('Signed out.');
   }
 
+  if (!portalChecked) {
+    return (
+      <main className="login-shell">
+        <div className="status-line">{status}</div>
+      </main>
+    );
+  }
+
   if (!operatorReady) {
     return (
       <main className="login-shell">
@@ -689,6 +712,7 @@ export default function App() {
             <LogIn size={17} /> {loginBusy ? 'Signing in...' : 'Sign In'}
           </button>
           <div className="status-line">{status}</div>
+          <div className="status-line">Signing in to {portalHostLabel(portalSettings.baseUrl)}</div>
         </form>
       </main>
     );
@@ -758,6 +782,12 @@ export default function App() {
               {selected ? `${studentFullName(selected)} - ${selected.admissionNo}` : 'Select a student.'}
               {liveMode && operatorSession ? ` - Signed in: ${operatorSession.name}` : ''}
             </p>
+            {!liveMode ? (
+              <p>
+                <strong>Sample mode</strong> - not connected to the portal. Changes stay on this computer.
+              </p>
+            ) : null}
+
           </div>
           <div className="topbar-actions">
             {liveMode ? (
@@ -945,6 +975,14 @@ function CheckList({ items }: { items: Array<[string, boolean]> }) {
       ))}
     </ul>
   );
+}
+
+function portalHostLabel(portalUrl: string) {
+  try {
+    return new URL(portalUrl).host;
+  } catch {
+    return portalUrl;
+  }
 }
 
 function Field({

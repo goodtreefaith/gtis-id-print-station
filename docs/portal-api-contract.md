@@ -1,39 +1,39 @@
 # Portal API Contract
 
-The desktop app can use real GTIS data through the `idprintapi` routes in the CodeIgniter portal. Authentication uses a device/service token configured privately for the print-station device. Operators should not see, type, or manage this value.
+The desktop app uses real GTIS data through the `idprintapi` routes in the CodeIgniter portal.
 
-Live mode also requires an allowed portal admin login. The device token identifies the installed print station; the operator token proves a current staff/admin session before student search, guardian updates, photo uploads, PDF saving, or printing. The default allowed roles are `Admin` and `Super Admin`, configurable in the portal's ID print config.
+## Authentication: staff login only
 
-Set the token on the portal server through `GTIS_IDPRINT_API_TOKEN` or an ignored `application/config/idprint.local.php` file:
+**The device token is retired.** The station has no built-in credential and
+no longer sends `Authorization` or `X-GTIS-IDPRINT-TOKEN`. Authentication is
+the staff member's own portal login only:
 
-```php
-<?php
-$config['idprint_api_token'] = 'replace-with-a-long-random-token';
-```
-
-Every request should send either:
-
-```http
-Authorization: Bearer replace-with-a-long-random-token
-```
-
-or:
-
-```http
-X-GTIS-IDPRINT-TOKEN: replace-with-a-long-random-token
-```
-
-Protected student/print requests also send:
+1. `POST /idprintapi/login` with the staff member's portal email and password
+   (no other credential). The login is **rate-limited with the same lockout as
+   the web login**.
+2. Every other route requires the operator token from that login, plus the
+   matching ID print permission:
 
 ```http
 X-GTIS-IDPRINT-OPERATOR: operator-token-from-login
 ```
 
+The default allowed roles are `Admin` and `Super Admin`, configurable in the
+portal's ID print config.
+
+### How the desktop app calls the portal
+
+All portal calls go through the Electron main process. The portal is fixed to
+`https://portal.gtis.edu.ph` (`https://preportal.gtis.edu.ph` when the station
+is started with `GTIS_IDPRINT_PORTAL=preportal`). The main process only allows
+`/idprintapi/` paths on that host, sends only the operator header (when the
+staff member is signed in), refuses redirects and applies a timeout.
+
 ## Operator Login
 
 `POST /idprintapi/login`
 
-This route still requires the hidden device token, then checks the same portal staff/admin email and password used by the portal login screen.
+This route needs no device token. It checks the same portal staff/admin email and password used by the portal login screen, and is rate-limited with the web login's lockout.
 
 ```json
 {
@@ -139,3 +139,22 @@ The portal validates JPEG/PNG image data, saves the image under the existing `up
 `POST /idprintapi/prints`
 
 This route currently acknowledges print events. It is reserved for a later print-history table if GTIS wants reprint tracking.
+
+## Upload ID Card Documents
+
+`POST /idprintapi/students/{id}/id-card-documents`
+
+Sent after a successful print. Requires the operator header.
+
+```json
+{
+  "front_png_data_url": "data:image/png;base64,...",
+  "back_png_data_url": "data:image/png;base64,..."
+}
+```
+
+Each side is a lossless PNG of exactly one CR80 card at 600 DPI
+(1275 x 2022 px), both sides upright, typically 0.3 to 4 MB. The portal accepts
+up to 8 MB per side (`idprint_api_max_document_bytes`); the app refuses to
+upload a side over 7.5 MB rather than downscale it. The request body can be
+around 10 MB, so the web server and proxy body limits must allow it.
