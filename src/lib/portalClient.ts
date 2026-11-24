@@ -358,6 +358,8 @@ async function portalFetch<T>(
       Accept: 'application/json',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${settings.token.trim()}`,
+      // Some portal hosts drop the Authorization header before PHP sees it.
+      'X-GTIS-IDPRINT-TOKEN': settings.token.trim(),
       ...(operatorToken ? { 'X-GTIS-IDPRINT-OPERATOR': operatorToken } : {}),
       ...(init.headers || {})
     }
