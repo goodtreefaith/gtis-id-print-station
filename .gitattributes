@@ -1,0 +1,2 @@
+# Golden print HTML must stay byte-identical on every OS (no CRLF conversion).
+scripts/fixtures/*.html -text
