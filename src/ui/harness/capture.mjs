@@ -84,7 +84,7 @@ const captured = [];
 const checksPassed = [];
 
 /** Simulated Live: the app thinks it was started against the test portal; the stub answers. */
-const LIVE = { mode: 'live', portalUrl: 'https://preportal.gtis.edu.ph' };
+const LIVE = { mode: 'live', portalUrl: process.env.CAPTURE_PORTAL_URL || 'https://preportal.gtis.edu.ph' };
 
 /**
  * preset: fields for window.__stub (mode, portalUrl, uploadFail, canEdit, ...).

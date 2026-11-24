@@ -1,147 +1,324 @@
 # GTIS ID Print Station
 
-Desktop-first student ID card printing app for GTIS.
+The desktop app that prints Good Tree International School student ID cards on
+the SMART-51D card printer. Staff sign in with their portal account, find a
+student, check the card and press **Print ID**. After printing, the app saves
+a sharp copy of the front and back to the student's **Documents** in the
+portal.
 
-It is intentionally outside the CodeIgniter portal repo. The app can be tested on macOS, then installed on a Windows NUC connected to the SMART-51D printer.
+![The main screen: student search on the left, card details in the middle, live card preview on the right](docs/screenshots/03-main-screen.png)
 
-## Current Scope
+**Contents**
 
-- Search students from mock data or the live GTIS portal API.
-- Lazy-load student results in pages, with a manual refresh button for newly updated portal records.
-- Generate QR codes from `students.admission_no`.
-- Preview ISO CR80 front/back cards.
-- Capture webcam photos with a head-position guide.
-- Crop, retake, preview, and approve photos.
-- Edit guardian emergency contact, LRN, and ESC in the app and save them back to the portal when live mode is configured.
-- Include or hide LRN and ESC per print without changing the saved portal values.
-- Save CR80 PDF for Mac testing.
-- Print via Electron using the local OS printer driver.
+- [Install on the printing computer](#install-on-the-printing-computer)
+- [Who can sign in](#who-can-sign-in)
+- [Printing an ID, step by step](#printing-an-id-step-by-step)
+- [When something needs attention](#when-something-needs-attention)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Questions and fixes](#questions-and-fixes)
+- [For developers](#for-developers)
 
-The app talks to the GTIS portal's `idprintapi` routes. There is **no device
-token**: staff sign in with their own portal account, and that sign-in is the
-only credential. Staff must sign in before searching students, editing
-guardians, approving photos, saving PDFs, or printing IDs.
+> The screenshots use made-up sample students. The real app shows real
+> students from the portal.
 
-## Development
+---
+
+## Install on the printing computer
+
+1. Open the [latest release](https://github.com/goodtreefaith/gtis-id-print-station/releases/latest).
+2. Download **`GTIS.ID.Print.Station.Setup.<version>.exe`** and run it.
+   - Windows may say "Windows protected your PC". Click **More info**, then
+     **Run anyway**. This appears because the app is not code-signed. It is
+     expected.
+   - The other file (without "Setup") is a portable copy that runs without
+     installing. It is useful for a quick test.
+3. Install the **SMART-51D printer driver** on the same computer if it is not
+   there yet (from the SMART-51/31/21 support download).
+4. Open **GTIS ID Print Station** from the Start menu.
+
+Nothing needs to be typed in during installation: no token, no key, no
+portal address. To update, download the newer Setup file from the latest
+release and run it over the old one.
+
+## Who can sign in
+
+Staff use the **same email and password they use for portal.gtis.edu.ph**.
+
+| Account | What it can do |
+| --- | --- |
+| **Super Admin** | Everything: print, and fix names, emergency contacts, LRN/ESC and photos. |
+| A role with the **ID Print Station** permission turned on (portal: *System Settings → Roles → Assign Permission*, under Student Information) | **View** lets the account print. **Edit** also lets it change student details from the app. |
+| Anyone else | Cannot sign in to the station. |
+
+Five wrong passwords lock that email for 15 minutes, the same as the portal
+login page. If a staff member's password changes, their account is turned off,
+or their role loses the permission, the station signs them out straight away.
+
+![Sign-in screen](docs/screenshots/01-sign-in.png)
+
+The sign-in screen always shows which portal it is connected to
+(**portal.gtis.edu.ph**). A wrong password shows a clear message and does not
+clear the email:
+
+![Sign-in with a wrong password](docs/screenshots/02-sign-in-error.png)
+
+Press **Sign out** (top right) when you leave the computer. The station locks
+again.
+
+## Printing an ID, step by step
+
+### 1. Find the student
+
+Type a name or student number in **Find a student**. The first match is
+selected automatically. Use the up and down arrows to pick another, or click
+it. **Refresh** loads changes made in the portal since the list was opened.
+
+### 2. Check the card
+
+The middle column holds what goes on the card. The right side shows exactly
+how the front and back will print, and it updates as you type.
+
+- **Name on the card** – first and last name (front).
+- **Emergency contact** – name, phone and address (back).
+- **ID numbers** – LRN and ESC. Untick **Show on card** to leave one off this
+  card without changing what is saved in the portal.
+- **Ready to print?** – a checklist. Every item must be ticked before
+  **Print ID** turns on.
+
+Changes you make here are saved back to the student's portal record when you
+print.
+
+### 3. Take or replace the photo
+
+Click **Add photo** or **Replace photo**. Use the webcam, or choose a file.
+Line the face up with the guide, adjust zoom, position and brightness, and
+check the small card preview. Then click **Use this photo**. The photo is
+saved to the student's portal record.
+
+![Photo editor with the head guide and card preview](docs/screenshots/05-photo.png)
+
+### 4. Print
+
+Click **Print ID** or press **Ctrl+P**. When it finishes, the status bar at the
+bottom shows three steps: **Save changes**, **Print card** and
+**File in portal**. The search box clears so you can type the next name
+straight away. Students printed today get a green **Printed** mark in the list.
+
+![Printed and filed in the portal](docs/screenshots/07-printed-and-filed.png)
+
+The filed copies are in the portal under the student's profile, in the
+**Documents** tab: one PNG for the front and one for the back, each
+1275 × 2022 pixels (600 DPI).
+
+**Reprint last** (top bar) prints the previous card again, for example after
+a misprint. Tick **Hide printed** to hide students already printed today.
+
+### Choosing the printer
+
+Click the printer name next to **Save PDF** to pick the printer.
+
+- Leave **Print without the Windows dialog** **off** for the first cards. The
+  SMART dialog then opens each time, so you can confirm the card size
+  (ISO CR80) and front-and-back (duplex) settings.
+- Turn it **on** only after test cards come out right. Printing is then one
+  key press per card.
+
+![Printer settings](docs/screenshots/06-printer-settings.png)
+
+**Save PDF** saves the card as a PDF instead of printing it. This is useful
+for checking the layout.
+
+## When something needs attention
+
+### A student isn't ready to print
+
+Missing items are shown in red, both in the list and in the **Ready to
+print?** checklist. Click **Fix** to jump to the field, or **Add photo** for a
+missing photo. **Print ID** stays off until everything is filled in. A phone
+number with letters, or with fewer than 7 digits, also blocks printing.
+
+![A student with a missing photo and emergency contact](docs/screenshots/04-needs-fixing.png)
+
+Text that is too long for the card is flagged in yellow ("Prints very small
+on the card"). It can still print, but shorten it if you can.
+
+### Printing the same student twice
+
+If a student was already printed today, the app asks first. The safe answer,
+**Don't print**, is selected by default, so pressing Enter by accident never
+prints a duplicate.
+
+![Already printed today: asks before printing again](docs/screenshots/08-reprint-check.png)
+
+### The printer reported an error
+
+The status bar says the card did not print, and **Try again** becomes the main
+button. Before retrying, the app asks you to check the printer for a stuck or
+half-printed card.
+
+![Print failed, with Try again](docs/screenshots/09-print-error.png)
+
+### The card printed but the portal copy didn't upload
+
+The card itself is fine. The status bar shows **File in portal** in red. Click
+**Try again**. This only re-uploads the copy and does not print another card.
+
+![Printed, but the archive copy did not upload](docs/screenshots/10-upload-failed.png)
+
+### "This account can print IDs but cannot change portal records"
+
+The signed-in account has the **ID Print Station** permission with **View**
+only. It can print, but the fields are read-only. Give the role **Edit** in the
+portal if that person should be able to fix details.
+
+![A view-only account](docs/screenshots/11-view-only.png)
+
+## Keyboard shortcuts
+
+| Key | What it does |
+| --- | --- |
+| Type in the search box | Find a student. The first match is selected. |
+| ↑ / ↓ | Pick another student in the list. |
+| Enter (in search) | Move to the **Print ID** button. |
+| **Ctrl+P** | Save changes, print, file in the portal, then clear the search for the next name. |
+| Esc | Close a dialog or the printer menu. |
+
+A fast routine for a line of students: **type the name → Ctrl+P → type the
+next name → Ctrl+P …**
+
+## Questions and fixes
+
+**It says "Portal login is required" or signs me out.** Sign in again. A
+session ends when it expires, when the password changes, or after a portal
+update.
+
+**My account can't sign in, but the password works on the portal.** The
+account's role needs to be Super Admin or have the **ID Print Station**
+permission (see [Who can sign in](#who-can-sign-in)).
+
+**"Sample mode – Practice data only" appears at the top.** The app was
+started in test mode. Nothing is saved to the portal in this mode. Close it and
+open the normal shortcut. Staff never see sample mode on a normal install.
+
+**The back of the card looks upside down in a PDF.** That is intended. The
+printer needs the back rotated. The copy filed in the portal is upright.
+
+**The old app asks for an "API token".** That is version 0.1.x, which is
+retired. Install the latest release.
+
+---
+
+## For developers
+
+The rest of this page is technical reference.
+
+### What's in the app
+
+- Electron + Vite + React + TypeScript, built for Windows (installer and
+  portable EXE).
+- Student search with lazy paging, a live CR80 card preview, a webcam photo
+  editor, emergency contact and LRN/ESC editing that saves back to the portal,
+  and a per-print choice to show or hide LRN/ESC.
+- QR codes from `students.admission_no`.
+- Printing through the OS printer driver, plus Save PDF.
+- After printing, an upright 600 DPI archive copy of the front and back
+  (1275 × 2022 px each), uploaded to the student's portal Documents.
+
+### Run it locally
 
 ```bash
 npm install
-npm run electron:dev                        # live portal, staff sign-in
-GTIS_IDPRINT_SAMPLE=1 npm run electron:dev  # sample data, no portal
+npm run electron:dev                                    # live portal, staff sign-in
+GTIS_IDPRINT_SAMPLE=1 npm run electron:dev              # sample students, no portal
+GTIS_IDPRINT_PORTAL=preportal npm run electron:dev      # pre-production portal
 ```
 
-Mac testing:
+On a Mac, use **Save PDF** to check the exact CR80 output. Normal printing opens
+the system print dialog. The webcam works through Electron's camera
+permission.
 
-- Use `Save PDF` to inspect exact CR80 output.
-- Use normal print mode to open the system print dialog.
-- Webcam capture works through Electron camera permissions.
+### Card artwork
 
-Windows NUC target:
-
-- Install the SMART-51D driver from the SMART-51/31/21 support download.
-- Configure the app printer dropdown to the SMART-51D printer name.
-- Leave `Silent print on Windows NUC` off for the first test prints.
-- Click `Print ID`, then use the SMART Windows print dialog to confirm ISO CR80/card size and front/back duplex settings.
-- Turn on silent mode only after dialog-mode physical test prints confirm the SMART driver settings are correct.
-
-## Template Assets
-
-The app uses the Canva SVG exports as the production card artwork:
+The card uses the Canva SVG exports:
 
 - `public/templates/2026-2027/front.canva-empty.svg`
 - `public/templates/2026-2027/back.canva.svg`
 
-The SVG front intentionally has no live photo/name/LRN/ESC data and no QR code. The app places the approved photo, QR code, name, grade, LRN, and ESC on top at print time, aligned to the Canva reference.
-The school year and student-number label/value are treated as design artwork, so the app no longer overlays extra school-year or student-number text. The QR code is still generated from `students.admission_no`.
+The front SVG has no photo, name, LRN, ESC or QR code. The app draws those on
+top at print time. The school year and the student-number label are part of
+the artwork. Files used only for comparison:
+`front.canva-sample.svg`, `front.reference.png`, `back.reference.png`.
 
-Reference assets are kept only for comparison:
-
-- `public/templates/2026-2027/front.canva-sample.svg`
-- `public/templates/2026-2027/front.reference.png`
-- `public/templates/2026-2027/back.reference.png`
-
-## Build
+### Build and release
 
 ```bash
-npm run build
+npm run build        # typecheck and build
+npm run dist:win     # Windows installer and portable EXE (on Windows)
 ```
 
-Windows installer/portable build should be produced on the Windows NUC or another Windows machine:
+Every push to `main` that touches the app runs the **Build Windows EXE**
+workflow in GitHub Actions. To publish a release:
 
-```bash
-npm run dist:win
-```
+1. Bump `version` in `package.json` and push to `main`.
+2. Wait for **Build Windows EXE** to pass and download its
+   `gtis-id-print-station-windows` artifact.
+3. Create a GitHub release `v<version>` and attach both EXEs.
 
-You can also build it from GitHub:
+### Portal connection and security
 
-1. Open the repository on GitHub.
-2. Go to Actions.
-3. Run `Build Windows EXE`.
-4. Download the `gtis-id-print-station-windows` artifact from the completed workflow run.
+This repository and its releases are **public**, so nothing secret may be
+committed or built into the app.
 
-## Security: no secrets in this repository or its builds
+- There is **no device token**. The only credential is the staff member's
+  own portal sign-in. The portal's `/idprintapi/login` returns a short-lived
+  operator token that the app sends as `X-GTIS-IDPRINT-OPERATOR`.
+- The portal address is fixed: `https://portal.gtis.edu.ph`, or
+  `https://preportal.gtis.edu.ph` with `GTIS_IDPRINT_PORTAL=preportal`. No
+  other host can be used.
+- All portal calls run in the Electron main process. They go only to
+  `/idprintapi/` paths on that host, refuse redirects and time out.
+- The window can only show the app itself: other pages and new windows are
+  blocked, and the packaged page has a strict Content Security Policy.
+- Student photos are downloaded only from the portal host over https (JPEG,
+  PNG, WebP or GIF, at most 15 MB).
+- Never put a token, password or key in a `.env` file. Vite compiles
+  `VITE_*` values into the app.
+- `npm run check:public` fails if:
+  - a `.env` file is tracked;
+  - a tracked file assigns a value to a TOKEN, SECRET, PASSWORD or KEY
+    variable;
+  - the build output contains a token;
+  - git history contains a token-like value.
 
-This repository and its GitHub releases are **public**. Nothing secret may be
-committed or compiled into a build:
+  It runs on every push and pull request.
 
-- Never put any token, password or key in a `.env` file. Vite compiles
-  `VITE_*` values into `dist/`, which ships inside every EXE. `.env.example`
-  intentionally contains no settings.
-- The app has no built-in credential. The device token used by earlier
-  versions is retired; staff sign in with their own portal account.
-- `npm run check:public` fails if a `.env` file is tracked, if any tracked file
-  assigns a value to a TOKEN/SECRET/PASSWORD/KEY variable, if the build output
-  contains a token, or if git history contains a token-like value. It prints
-  only file, commit and line, never the value. It runs in GitHub Actions on
-  every push and pull request (`Checks`) and in `Build Windows EXE`.
+The portal API shape is in
+[docs/portal-api-contract.md](docs/portal-api-contract.md).
 
-If a real token was ever committed or shipped in a build, rotate it on the
-portal; removing it from the code does not un-publish it.
-
-## Portal and Sign-in
-
-- The portal is fixed: `https://portal.gtis.edu.ph`. To test against the
-  pre-production portal, start the app with the environment variable
-  `GTIS_IDPRINT_PORTAL=preportal` (uses `https://preportal.gtis.edu.ph`). No
-  other host can be used, and no token is involved.
-- The app starts in **live mode** and shows the staff sign-in screen, which
-  names the portal host you are signing in to. Sign in with an allowed portal
-  account. The portal limits failed sign-ins with the same lockout as the web
-  login.
-- **Sample mode** (sample students, nothing sent to the portal, clearly
-  labelled) is only for development and testing: start the app with
-  `GTIS_IDPRINT_SAMPLE=1`. There is deliberately no switch for it on the lock
-  screen, so staff cannot end up printing sample data by accident.
-
-All portal calls run in the Electron main process. It sends only the signed-in
-staff member's session header, only to `/idprintapi/` routes on the fixed
-portal, refuses redirects and times out. Earlier versions kept a device token
-in browser storage or an encrypted file; the app deletes both on startup.
-
-The main window can only show the app itself: navigation elsewhere and new
-windows are blocked, the bridge answers only the app page, and the packaged
-page has a strict Content Security Policy. Student photos are downloaded only
-from the portal host over https (JPEG, PNG, WebP or GIF, at most 15 MB).
-
-## Portal Adapter
-
-- Use `Refresh` in the app to pull newly enrolled students, recently changed guardian contacts, updated LRN/ESC values, or approved photo updates.
-- After a successful print, the app uploads the front and back of the card to
-  the student's Documents as upright 600 DPI PNGs (1275 x 2022 px each).
-
-See [docs/portal-api-contract.md](docs/portal-api-contract.md) for the portal API shape.
-
-## Tests
+### Tests
 
 ```bash
 npm run typecheck
 npm run build
 npm run check:public   # after build
 npm run test:bridge    # portal bridge against a local fake portal
-npm run test:archive   # renders the archive PNGs offscreen at display scales 1, 1.25, 1.5, 2
+npm run test:archive   # archive PNGs at display scales 1, 1.25, 1.5, 2
 ```
 
-`test:archive` writes the PNGs to `archive-test-output/` and checks their size,
-that the back is upright, that there are no white margins, and that the print
-HTML is still byte-identical to `scripts/fixtures/` (the printer needs the back
-rotated 180 degrees).
+`test:archive` writes the PNGs to `archive-test-output/`. It checks their size,
+that the back is upright and that there are no white margins. It also checks
+that the print HTML is still byte-identical to `scripts/fixtures/`, because the
+printer needs the back rotated 180°.
+
+### Updating the screenshots
+
+The screenshots in `docs/screenshots/` come from the UI harness, which uses a
+fake portal and sample students and makes no network calls:
+
+```bash
+CAPTURE_PORTAL_URL=https://portal.gtis.edu.ph \
+  npm exec --yes --package=playwright@1.61.1 -- \
+  node src/ui/harness/capture.mjs readme --out=/tmp/readme-shots
+```
+
+Copy the `*.1920x1080.png` files you need into `docs/screenshots/`.
