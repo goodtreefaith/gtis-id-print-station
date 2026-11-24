@@ -29,6 +29,20 @@ Protected student/print requests also send:
 X-GTIS-IDPRINT-OPERATOR: operator-token-from-login
 ```
 
+### How the desktop app sends it
+
+The station's device token is entered once in the app's Device setup and kept
+encrypted in the Electron main process; it is never compiled into a build and
+never exposed to the app's web page. Every portal call goes through the main
+process, which only allows `/idprintapi/` paths on the configured portal,
+refuses redirects, and sends **both** headers above. The live host drops
+`Authorization` before PHP sees it, so `X-GTIS-IDPRINT-TOKEN` is the one that
+authenticates.
+
+Device setup checks a token by calling `POST /idprintapi/login` with an empty
+email and password: `422` ("Email and password are required.") means the
+device token was accepted, `401` means it was rejected.
+
 ## Operator Login
 
 `POST /idprintapi/login`
@@ -139,3 +153,22 @@ The portal validates JPEG/PNG image data, saves the image under the existing `up
 `POST /idprintapi/prints`
 
 This route currently acknowledges print events. It is reserved for a later print-history table if GTIS wants reprint tracking.
+
+## Upload ID Card Documents
+
+`POST /idprintapi/students/{id}/id-card-documents`
+
+Sent after a successful print. Requires the operator header.
+
+```json
+{
+  "front_png_data_url": "data:image/png;base64,...",
+  "back_png_data_url": "data:image/png;base64,..."
+}
+```
+
+Each side is a lossless PNG of exactly one CR80 card at 600 DPI
+(1275 x 2022 px), both sides upright, typically 0.3 to 4 MB. The portal accepts
+up to 8 MB per side (`idprint_api_max_document_bytes`); the app refuses to
+upload a side over 7.5 MB rather than downscale it. The request body can be
+around 10 MB, so the web server and proxy body limits must allow it.

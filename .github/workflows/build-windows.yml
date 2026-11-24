@@ -1,5 +1,8 @@
 name: Build Windows EXE
 
+# This workflow is deliberately tokenless: no secrets are passed to the build.
+# The device token is entered on the station (Device setup), never compiled in.
+
 on:
   workflow_dispatch:
   push:
@@ -9,6 +12,7 @@ on:
       - ".github/workflows/build-windows.yml"
       - "electron/**"
       - "public/**"
+      - "scripts/**"
       - "src/**"
       - "index.html"
       - "package.json"
@@ -16,14 +20,19 @@ on:
       - "tsconfig*.json"
       - "vite.config.ts"
 
+permissions:
+  contents: read
+
 jobs:
   build-windows:
     name: Build Windows installer and portable EXE
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout (full history for the secret scan)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -34,8 +43,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck and build Windows app
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Public-safety checks (source, build output, history)
+        run: npm run check:public
+
+      - name: Portal bridge tests (Node fetch and Electron net.fetch)
+        run: npm run test:bridge
+
+      - name: Archive capture test (600 DPI, offscreen, scales 1 to 2)
+        run: npm run test:archive
+
+      - name: Upload archive test PNGs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-test-pngs-windows
+          path: archive-test-output/*.png
+          if-no-files-found: warn
+
+      - name: Build Windows app
         run: npm run dist:win
+
+      - name: Public-safety checks (packaged app.asar)
+        run: npm run check:public
 
       - name: Upload Windows EXE artifacts
         uses: actions/upload-artifact@v4
