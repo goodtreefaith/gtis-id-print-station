@@ -1,6 +1,7 @@
-import { AlertTriangle, FlaskConical, Radio } from 'lucide-react';
+import { FlaskConical, Radio } from 'lucide-react';
 
-export type StationMode = 'live' | 'sample' | 'attention';
+/** Set when the desktop app starts (portal.info().mode); there is no in-app switch. */
+export type StationMode = 'live' | 'sample';
 
 /** Always-visible station mode. Text carries the meaning; colour only reinforces it. */
 export function ModeBadge({ mode, portalHost }: { mode: StationMode; portalHost?: string }) {
@@ -15,19 +16,8 @@ export function ModeBadge({ mode, portalHost }: { mode: StationMode; portalHost?
       </span>
     );
   }
-  if (mode === 'attention') {
-    return (
-      <span className="mode-badge is-attention" data-testid="mode-badge" title="The device token needs attention.">
-        <AlertTriangle size={16} aria-hidden="true" />
-        <span>
-          <strong>Not connected</strong>
-          <small>Device token needs attention</small>
-        </span>
-      </span>
-    );
-  }
   return (
-    <span className="mode-badge is-sample" data-testid="mode-badge" title="Practice data. Nothing is read from or saved to the portal.">
+    <span className="mode-badge is-sample" data-testid="mode-badge" title="Practice data. Started with GTIS_IDPRINT_SAMPLE=1; nothing is read from or saved to the portal.">
       <FlaskConical size={16} aria-hidden="true" />
       <span>
         <strong>Sample mode</strong>

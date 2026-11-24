@@ -30,9 +30,8 @@ export interface StudentRecord {
 }
 
 /**
- * Renderer view of the portal connection. Holds no secret: the device token
- * lives only in the Electron main process (see window.gtPrint.device).
- * live = this station has completed device setup.
+ * Renderer view of the portal connection. Holds no secret.
+ * live = real portal with staff sign-in; otherwise sample data.
  */
 export interface PortalSettings {
   baseUrl: string;
@@ -76,24 +75,11 @@ export interface PrintResult {
   failureReason?: string;
 }
 
-/** Device setup status. Contains nothing derived from the token. */
-export interface DeviceStatus {
-  /** A token is saved, readable, and for an allowed portal host (live mode). */
-  configured: boolean;
+export interface PortalInfo {
+  /** Fixed portal: https://portal.gtis.edu.ph, or preportal when the station runs with GTIS_IDPRINT_PORTAL=preportal. */
   portalUrl: string;
-  /** The saved token can be decrypted on this computer and Windows account. */
-  tokenReadable: boolean;
-  encryptionAvailable: boolean;
-  /** Plain-language note when setup needs attention (e.g. re-enter the token), else ''. */
-  message: string;
-}
-
-export type DeviceTokenCheck = 'accepted' | 'rejected' | 'unreachable';
-
-export interface DeviceConfigureResult extends DeviceStatus {
-  /** Only 'accepted' saves the token. 'rejected' (portal refused it) and
-   * 'unreachable' (no confirmation) save nothing and keep the old setup. */
-  check: DeviceTokenCheck;
+  /** live by default; sample only when the station runs with GTIS_IDPRINT_SAMPLE=1. */
+  mode: 'live' | 'sample';
 }
 
 export interface PortalBridgeRequest {
@@ -111,14 +97,9 @@ export interface PortalBridgeResponse {
   payload: unknown;
 }
 
-export interface DeviceBridge {
-  status: () => Promise<DeviceStatus>;
-  /** Rejects with a readable message for invalid input or unavailable encryption. */
-  configure: (input: { portalUrl: string; token: string }) => Promise<DeviceConfigureResult>;
-  clear: () => Promise<DeviceStatus>;
-}
-
 export interface PortalBridge {
+  info: () => Promise<PortalInfo>;
+  /** Sends only the operator header (when given); there is no device token. */
   request: (req: PortalBridgeRequest) => Promise<PortalBridgeResponse>;
 }
 
@@ -132,7 +113,6 @@ export interface PrintStationBridge {
   captureCardPngs?: (html: string) => Promise<{ front: string; back: string; dpi: number }>;
   fetchImageDataUrl?: (url: string) => Promise<string>;
   readAssetDataUrl?: (assetPath: string) => Promise<string | null>;
-  device?: DeviceBridge;
   portal?: PortalBridge;
 }
 

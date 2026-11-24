@@ -83,15 +83,15 @@ const blocked = [];
 const captured = [];
 const checksPassed = [];
 
-const LIVE_DEVICE = { configured: true, portalUrl: 'https://preportal.gtis.edu.ph', tokenReadable: true, encryptionAvailable: true, message: '' };
+/** Simulated Live: the app thinks it was started against the test portal; the stub answers. */
+const LIVE = { mode: 'live', portalUrl: 'https://preportal.gtis.edu.ph' };
 
 /**
- * preset: fields for window.__stub (device, uploadFail, canEdit, ...).
- * setupSeen: pretend this station already chose Sample mode once (skips the first-run setup screen).
+ * preset: fields for window.__stub (mode, portalUrl, uploadFail, canEdit, ...).
  * signedIn: put a fixture operator session in storage (simulated live only).
  * simulatedLiveLock: baseline only (old app read portal settings from storage).
  */
-async function newPage(browser, size, { preset = {}, setupSeen = true, signedIn = false, simulatedLiveLock = false } = {}) {
+async function newPage(browser, size, { preset = {}, signedIn = false, simulatedLiveLock = false } = {}) {
   const context = await browser.newContext({
     viewport: { width: size.w, height: size.h },
     deviceScaleFactor: 1,
@@ -110,15 +110,13 @@ async function newPage(browser, size, { preset = {}, setupSeen = true, signedIn 
   }, preset);
   await context.addInitScript({ path: path.join(here, 'bridgeStub.js') });
   await context.addInitScript(
-    ({ seen, session, liveLock }) => {
+    ({ session, liveLock }) => {
       if (liveLock) {
         window.localStorage.setItem(
           'gtis-id-print-station.portal-settings',
           JSON.stringify({ baseUrl: 'https://portal.example.invalid', token: 'fixture-not-a-real-token', useMock: false })
         );
       }
-      if (seen) window.localStorage.setItem('gtis-id-print-station.device-setup-seen', '1');
-      else window.localStorage.removeItem('gtis-id-print-station.device-setup-seen');
       if (session) {
         window.localStorage.setItem(
           'gtis-id-print-station.operator-session',
@@ -134,7 +132,7 @@ async function newPage(browser, size, { preset = {}, setupSeen = true, signedIn 
         window.localStorage.removeItem('gtis-id-print-station.operator-session');
       }
     },
-    { seen: setupSeen, session: signedIn, liveLock: simulatedLiveLock }
+    { session: signedIn, liveLock: simulatedLiveLock }
   );
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
@@ -257,7 +255,7 @@ async function gallery(browser, size, view, name, note) {
   await context.close();
 }
 
-async function deviceRun(browser, size) {
+async function lockRun(browser, size) {
   const one = async (name, note, options, steps) => {
     const { context, page } = await newPage(browser, size, options);
     await page.goto(`${ORIGIN}/`);
@@ -266,49 +264,12 @@ async function deviceRun(browser, size) {
     await shooter(page, size)(name, note);
     await context.close();
   };
-  const submitToken = async (page) => {
-    await page.getByRole('textbox', { name: 'Device token' }).fill('fixture-token-not-real-0000');
-    await page.getByRole('button', { name: /Connect and check|Replace token/ }).click();
-    await page.waitForTimeout(900);
-  };
-
-  await one('01-lock-screen', 'SIMULATED live (stub device configured; no portal contacted)', { preset: { device: LIVE_DEVICE } });
-  await one('01b-lock-sign-in-error', 'SIMULATED live: stub portal answers 401 for a fake password', { preset: { device: LIVE_DEVICE } }, async (page) => {
+  await one('01-lock-screen', 'SIMULATED live (stub portal.info mode=live; no portal contacted)', { preset: LIVE });
+  await one('01b-lock-sign-in-error', 'SIMULATED live: stub portal answers 401 for a fake password', { preset: LIVE }, async (page) => {
     await page.getByLabel('Portal email').fill('registrar@example.invalid');
     await page.getByRole('textbox', { name: 'Password' }).fill('wrong');
     await page.keyboard.press('Enter');
     await page.getByRole('alert').waitFor();
-  });
-  await one('02a-device-setup-first-run', 'Real app, first run (stub device not configured)', { setupSeen: false });
-  await one('02b-device-setup-checking', 'Real app: checking a fake token', { setupSeen: false, preset: { configureResult: 'hang' } }, submitToken);
-  await one('02c-device-setup-rejected', 'Real app: stub configure() answers rejected', { setupSeen: false, preset: { configureResult: 'rejected' } }, submitToken);
-  await one('02d-device-setup-unreachable', 'Real app: stub configure() answers unreachable', { setupSeen: false, preset: { configureResult: 'unreachable' } }, submitToken);
-  await one('02e-device-setup-bad-input', 'Real app: stub configure() rejects; bridgeErrorMessage strips the Electron prefix', { setupSeen: false, preset: { configureResult: 'throw' } }, submitToken);
-  await one('02f-device-setup-accepted', 'Real app: stub configure() answers accepted', { setupSeen: false }, submitToken);
-  await one('02g-after-setup-sign-in', 'Real app: Continue to sign in after setup (SIMULATED live)', { setupSeen: false }, async (page) => {
-    await submitToken(page);
-    await page.getByRole('button', { name: 'Continue to sign in' }).click();
-    await page.getByLabel('Portal email').waitFor();
-  });
-  await one('02h-device-setup-no-encryption', 'Real app: Windows encryption unavailable', {
-    setupSeen: false,
-    preset: { device: { configured: false, portalUrl: '', tokenReadable: false, encryptionAvailable: false, message: '' } }
-  });
-  await one('02i-device-setup-token-unreadable', 'Real app: saved token unreadable (opens setup automatically)', {
-    preset: {
-      device: {
-        configured: false,
-        portalUrl: 'https://portal.gtis.edu.ph',
-        tokenReadable: false,
-        encryptionAvailable: true,
-        message: 'The saved device token can’t be read on this Windows account. Enter it again to reconnect.'
-      }
-    }
-  });
-  await one('02j-device-setup-from-lock-screen', 'Real app: Device setup opened from the lock screen (SIMULATED live)', { preset: { device: LIVE_DEVICE } }, async (page) => {
-    await page.getByRole('button', { name: /Device setup/ }).click();
-    await page.getByRole('heading', { name: 'Device setup' }).waitFor();
-    await page.waitForTimeout(300);
   });
 }
 
@@ -320,7 +281,7 @@ async function sampleRun(browser, size) {
   await assertSample(page);
   const search = searchBox(page);
 
-  await shot('03-app-open', 'Sample mode; search focused on open; first student shown; Device setup in the top bar');
+  await shot('03-app-open', 'Sample mode; search focused on open; first student shown');
   await search.fill('santos');
   await page.waitForTimeout(700);
   await shot('04-search-results', 'query "santos": the first match (Arielle) is selected and previewed; blocked strip');
@@ -442,7 +403,7 @@ async function sampleRun(browser, size) {
 }
 
 async function liveRun(browser, size, { checks = false } = {}) {
-  const { context, page } = await newPage(browser, size, { preset: { device: LIVE_DEVICE, uploadDelayMs: 2500 }, signedIn: 'edit' });
+  const { context, page } = await newPage(browser, size, { preset: { ...LIVE, uploadDelayMs: 2500 }, signedIn: 'edit' });
   const shot = shooter(page, size);
   await page.goto(`${ORIGIN}/`);
   await settle(page);
@@ -477,7 +438,7 @@ async function liveRun(browser, size, { checks = false } = {}) {
   await shot('23b-live-upload-retried', 'SIMULATED live: upload retried and filed');
   await context.close();
 
-  const ro = await newPage(browser, size, { preset: { device: LIVE_DEVICE, canEdit: false }, signedIn: 'view' });
+  const ro = await newPage(browser, size, { preset: { ...LIVE, canEdit: false }, signedIn: 'view' });
   await ro.page.goto(`${ORIGIN}/`);
   await settle(ro.page);
   await shooter(ro.page, size)('24-live-read-only-operator', 'SIMULATED live: operator who can print but not edit');
@@ -718,7 +679,7 @@ async function bugChecks(browser, size) {
   }
   {
     // Bug 2: a failed search drops the waiting print and says so.
-    const { context, page } = await newPage(browser, size, { preset: { device: LIVE_DEVICE }, signedIn: 'edit' });
+    const { context, page } = await newPage(browser, size, { preset: LIVE, signedIn: 'edit' });
     await page.goto(`${ORIGIN}/`);
     await settle(page);
     await page.evaluate(() => (window.__stub.searchFail = true));
@@ -806,9 +767,15 @@ async function finalRun(browser, size) {
     await shooter(page, size)(name, note);
     await context.close();
   };
-  const live = { preset: { device: LIVE_DEVICE }, signedIn: 'edit' };
-  await one('01-sign-in', 'SIMULATED live lock screen', { preset: { device: LIVE_DEVICE } });
-  await one('02-device-setup', 'first-run Device setup (stub device)', { setupSeen: false });
+  const live = { preset: LIVE, signedIn: 'edit' };
+  await one('01-sign-in', 'SIMULATED live lock screen', { preset: LIVE });
+  await one('02-sign-in-error', 'SIMULATED live: wrong password', { preset: LIVE }, async (page) => {
+    await page.getByLabel('Portal email').fill('registrar@example.invalid');
+    await page.getByRole('textbox', { name: 'Password' }).fill('wrong');
+    await page.keyboard.press('Enter');
+    await page.getByRole('alert').waitFor();
+  });
+  await one('03b-live-app-open', 'SIMULATED live: signed in, Live badge with the portal host', live);
   await one('03-ready', 'Sample mode, ready to print', {});
   await one('04-blocked', 'blocked student: photo needed, emergency contact', {}, async (page) => {
     await searchBox(page).fill('santos');
@@ -833,7 +800,7 @@ async function finalRun(browser, size) {
     await page.keyboard.press('Control+p');
     await strip(page).filter({ hasText: /filed in the student/ }).waitFor({ timeout: 15000 });
   });
-  await one('09-live-upload-failed', 'SIMULATED live: printed, upload failed, Try again', { ...live, preset: { device: LIVE_DEVICE, uploadFail: true, uploadDelayMs: 300 } }, async (page) => {
+  await one('09-live-upload-failed', 'SIMULATED live: printed, upload failed, Try again', { ...live, preset: { ...LIVE, uploadFail: true, uploadDelayMs: 300 } }, async (page) => {
     await page.keyboard.press('Control+p');
     await strip(page).filter({ hasText: /didn.t upload/ }).waitFor({ timeout: 15000 });
   });
@@ -846,7 +813,7 @@ async function finalRun(browser, size) {
 }
 
 async function redesignRun(browser, size) {
-  await deviceRun(browser, size);
+  await lockRun(browser, size);
   await gallery(browser, size, 'list-states', 'gallery-03-list-states', 'student list: loading, error, empty');
   await gallery(browser, size, 'strip-states', 'gallery-04-status-strip-states', 'strip: fixture copies of the states App.tsx sets');
   await sampleRun(browser, size);
@@ -899,7 +866,7 @@ async function main() {
     `# ${roundName} captures`,
     '',
     baseline ? 'Build: baseline (main before the redesign).' : `Build: this round's working tree.`,
-    'Fake print/device/portal bridge (src/ui/harness/bridgeStub.js), synthetic students, outside network blocked.',
+    'Fake print/portal bridge (src/ui/harness/bridgeStub.js), synthetic students, outside network blocked.',
     'Notes marked SIMULATED live use the stub portal: the app is in Live mode, but no portal is contacted.',
     'Files prefixed `gallery-` are components rendered with fixture props on a dev-only page, not a live app flow.',
     '',

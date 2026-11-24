@@ -17,14 +17,17 @@ It is intentionally outside the CodeIgniter portal repo. The app can be tested o
 - Save CR80 PDF for Mac testing.
 - Print via Electron using the local OS printer driver.
 
-Live mode needs the matching `idprintapi` routes deployed in the GTIS portal and a device API token configured privately on the portal server. School IT enters that token once on the station in **Device setup**; operators do not see or enter it.
-When live mode is on, operators must also sign in with an allowed portal admin account before searching students, editing guardians, approving photos, saving PDFs, or printing IDs.
+The app talks to the GTIS portal's `idprintapi` routes. There is **no device
+token**: staff sign in with their own portal account, and that sign-in is the
+only credential. Staff must sign in before searching students, editing
+guardians, approving photos, saving PDFs, or printing IDs.
 
 ## Development
 
 ```bash
 npm install
-npm run electron:dev
+npm run electron:dev                        # live portal, staff sign-in
+GTIS_IDPRINT_SAMPLE=1 npm run electron:dev  # sample data, no portal
 ```
 
 Mac testing:
@@ -81,12 +84,11 @@ You can also build it from GitHub:
 This repository and its GitHub releases are **public**. Nothing secret may be
 committed or compiled into a build:
 
-- Never put the device token, or any token, password or key, in a `.env`
-  file. Vite compiles `VITE_*` values into `dist/`, which ships inside every
-  EXE. `.env.example` intentionally contains no settings.
-- The device token is entered on the station itself (see Device Setup below)
-  and stored encrypted by the operating system. It never reaches the
-  renderer, DevTools or any file in plain text.
+- Never put any token, password or key in a `.env` file. Vite compiles
+  `VITE_*` values into `dist/`, which ships inside every EXE. `.env.example`
+  intentionally contains no settings.
+- The app has no built-in credential. The device token used by earlier
+  versions is retired; staff sign in with their own portal account.
 - `npm run check:public` fails if a `.env` file is tracked, if any tracked file
   assigns a value to a TOKEN/SECRET/PASSWORD/KEY variable, if the build output
   contains a token, or if git history contains a token-like value. It prints
@@ -96,46 +98,33 @@ committed or compiled into a build:
 If a real token was ever committed or shipped in a build, rotate it on the
 portal; removing it from the code does not un-publish it.
 
-## Device Setup (once per station)
+## Portal and Sign-in
 
-Without device setup the app runs in **Sample mode** (clearly labelled), with
-sample students and nothing sent to the portal.
+- The portal is fixed: `https://portal.gtis.edu.ph`. To test against the
+  pre-production portal, start the app with the environment variable
+  `GTIS_IDPRINT_PORTAL=preportal` (uses `https://preportal.gtis.edu.ph`). No
+  other host can be used, and no token is involved.
+- The app starts in **live mode** and shows the staff sign-in screen, which
+  names the portal host you are signing in to. Sign in with an allowed portal
+  account. The portal limits failed sign-ins with the same lockout as the web
+  login.
+- **Sample mode** (sample students, nothing sent to the portal, clearly
+  labelled) is only for development and testing: start the app with
+  `GTIS_IDPRINT_SAMPLE=1`. There is deliberately no switch for it on the lock
+  screen, so staff cannot end up printing sample data by accident.
 
-1. On the portal server, configure the device token (`GTIS_IDPRINT_API_TOKEN`
-   or `application/config/idprint.local.php`, see the API contract).
-2. On the station, open the app, click `Device setup` in the Sample mode banner.
-3. Keep the portal address (`https://portal.gtis.edu.ph`, or
-   `https://preportal.gtis.edu.ph` for testing; no other host is allowed),
-   paste the device token (at least 32 characters) and click
-   `Save device setup`.
-4. The app checks the token with the portal and saves it **only if the portal
-   accepts it**. Then it switches to live mode and asks for a portal sign-in.
-   If the portal rejects the token or cannot be reached, nothing is saved.
-
-The token is encrypted with Electron `safeStorage` (Windows DPAPI for the
-signed-in Windows user, or the macOS Keychain) in `device-config.json` under
-the app's user-data folder. If the computer cannot encrypt it, the app refuses
-to save it; there is no plain-text fallback. Afterwards the app shows only the
-portal host; nothing derived from the token is ever shown. If the saved token
-can no longer be decrypted (for example after a Windows account change), the
-app returns to Sample mode and asks for the token to be entered again.
-`Reset device setup` on the sign-in screen removes the saved token.
-
-All portal calls run in the Electron main process, which adds the device token
-headers and only allows `/idprintapi/` routes on the configured portal. Older
-versions kept a token in browser storage; the app deletes that on startup.
+All portal calls run in the Electron main process. It sends only the signed-in
+staff member's session header, only to `/idprintapi/` routes on the fixed
+portal, refuses redirects and times out. Earlier versions kept a device token
+in browser storage or an encrypted file; the app deletes both on startup.
 
 The main window can only show the app itself: navigation elsewhere and new
 windows are blocked, the bridge answers only the app page, and the packaged
 page has a strict Content Security Policy. Student photos are downloaded only
-from the configured portal host over https (JPEG, PNG, WebP or GIF, at most
-15 MB). For local development against a fake portal, an unpackaged run may add
-hosts with `GTIS_IDPRINT_DEV_PORTAL_HOSTS`; release builds ignore it.
+from the portal host over https (JPEG, PNG, WebP or GIF, at most 15 MB).
 
 ## Portal Adapter
 
-- In live mode, use an allowed portal admin login at the app lock screen. The
-  sign-in screen shows which portal host you are signing in to.
 - Use `Refresh` in the app to pull newly enrolled students, recently changed guardian contacts, updated LRN/ESC values, or approved photo updates.
 - After a successful print, the app uploads the front and back of the card to
   the student's Documents as upright 600 DPI PNGs (1275 x 2022 px each).

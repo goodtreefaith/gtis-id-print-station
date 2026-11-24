@@ -3,7 +3,8 @@
 // Nothing here talks to a printer or a portal: `portal.request` answers from the
 // in-memory synthetic students below. Every value is made up.
 //
-// A preset can be set before this script runs: window.__stubPreset = { device, uploadFail, ... }.
+// A preset can be set before this script runs: window.__stubPreset = { mode, portalUrl, uploadFail, ... }.
+// `mode` mirrors how the desktop app was started: 'live', or 'sample' (GTIS_IDPRINT_SAMPLE=1).
 (() => {
   const preset = window.__stubPreset || {};
   const control = (window.__stub = {
@@ -15,16 +16,10 @@
     printCalls: 0,
     jobs: [],
     archiveJobs: [],
-    configureResult: 'accepted',
     searchFail: false,
     canEdit: true,
-    device: {
-      configured: false,
-      portalUrl: '',
-      tokenReadable: false,
-      encryptionAvailable: true,
-      message: ''
-    },
+    mode: 'sample',
+    portalUrl: 'https://portal.gtis.edu.ph',
     ...preset
   });
 
@@ -64,7 +59,7 @@
   async function portalRequest(req) {
     await wait(200);
     const path = String(req.path || '');
-    if (!control.device.configured) return fail(0, 'Station is not set up.');
+    if (control.mode !== 'live') return fail(0, 'Sample mode: no portal.');
     if (path === '/idprintapi/login') {
       if (req.body && req.body.password === 'wrong') return fail(401, 'That email or password didn’t work. Check them and try again.');
       return ok({
@@ -143,27 +138,10 @@
         reader.readAsDataURL(blob);
       });
     },
-    device: {
-      async status() {
-        return { ...control.device };
-      },
-      async configure(input) {
-        await wait(control.configureResult === 'hang' ? 1e9 : 600);
-        if (control.configureResult === 'throw') {
-          throw new Error("Error invoking remote method 'device:configure': Error: That token has characters that aren’t allowed.");
-        }
-        const check = control.configureResult;
-        if (check === 'accepted') {
-          control.device = { configured: true, portalUrl: input.portalUrl, tokenReadable: true, encryptionAvailable: true, message: '' };
-        }
-        return { ...control.device, check };
-      },
-      async clear() {
-        control.device = { configured: false, portalUrl: '', tokenReadable: false, encryptionAvailable: true, message: '' };
-        return { ...control.device };
-      }
-    },
     portal: {
+      async info() {
+        return { portalUrl: control.portalUrl, mode: control.mode };
+      },
       request: portalRequest
     }
   };

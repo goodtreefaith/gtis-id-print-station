@@ -1620,7 +1620,7 @@ kbd.on-primary {
   border-color: var(--amber-200);
 }
 
-/* ---------- Centered screens: sign-in and device setup ---------- */
+/* ---------- Centered screens: sign-in ---------- */
 
 .center-shell {
   min-height: 100vh;
@@ -1667,195 +1667,33 @@ kbd.on-primary {
   text-align: center;
 }
 
-.setup-card {
-  width: min(960px, 100%);
-}
 
-.setup-grid {
-  display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
-  gap: 28px;
-  align-items: start;
-}
 
-.setup-explain {
-  display: grid;
-  gap: 14px;
-}
 
-.setup-explain h2 {
-  font-size: 15px;
-}
 
-.mode-panel {
-  border-radius: 12px;
-  padding: 14px;
-  display: grid;
-  gap: 10px;
-  font-size: 14px;
-}
 
-.mode-panel .mode-badge {
-  justify-self: start;
-}
 
-.mode-panel.is-sample {
-  background: var(--amber-50);
-  color: var(--amber-800);
-}
 
-.mode-panel.is-live {
-  background: var(--brand-50);
-  color: var(--brand-ink);
-}
 
-.setup-steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-  counter-reset: step;
-}
 
-.setup-steps li {
-  counter-increment: step;
-  display: grid;
-  grid-template-columns: 30px 1fr;
-  column-gap: 10px;
-  font-size: 14px;
-  color: var(--muted);
-}
 
-.setup-steps li::before {
-  content: counter(step);
-  grid-row: span 2;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  border: 1.5px solid var(--line-strong);
-  font-weight: 700;
-  color: var(--muted);
-}
 
-.setup-steps li strong {
-  color: var(--text);
-}
 
-.setup-steps li.is-current::before {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
-}
 
-.setup-steps li.is-done::before {
-  content: "✓";
-  background: var(--brand-50);
-  border-color: var(--brand-200);
-  color: var(--brand-ink);
-}
 
-.setup-form {
-  display: grid;
-  gap: 16px;
-  align-content: start;
-}
 
-.setup-form.is-loading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  min-height: 200px;
-  justify-content: center;
-}
 
-.portal-choice {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
 
-.portal-choice legend {
-  padding: 0 0 6px;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--muted);
-}
 
-.portal-option {
-  min-height: 64px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px;
-  border: 1.5px solid var(--line-strong);
-  border-radius: 10px;
-  cursor: pointer;
-}
 
-.portal-option.is-selected {
-  border-color: var(--brand);
-  background: var(--brand-50);
-}
 
-.portal-option input {
-  width: 20px;
-  height: 20px;
-  margin: 1px 0 0;
-  accent-color: var(--brand);
-  flex: none;
-}
 
-.portal-option strong,
-.portal-option small {
-  display: block;
-}
 
-.portal-option small {
-  color: var(--muted);
-  font-size: 13px;
-}
 
-.setup-message {
-  font-size: 14px;
-  color: var(--muted);
-}
 
-.setup-facts {
-  margin: 0;
-  display: grid;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px 16px;
-}
 
-.setup-facts div {
-  display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 10px;
-}
 
-.setup-facts dt {
-  color: var(--muted);
-  font-weight: 650;
-  font-size: 14px;
-}
 
-.setup-facts dd {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
 
 .confirm-box {
   border: 1px solid var(--red-200);
@@ -1888,16 +1726,7 @@ textarea::placeholder {
   opacity: 1;
 }
 
-.mode-badge.is-attention {
-  background: var(--amber-50);
-  border-color: #d69e2e;
-  color: var(--amber-800);
-}
 
-.mode-panel.is-attention {
-  background: var(--amber-50);
-  color: var(--amber-800);
-}
 
 .search-hint {
   font-size: 13px;
@@ -2236,9 +2065,6 @@ textarea::placeholder {
   color: var(--muted);
 }
 
-.center-card-foot .text-button {
-  font-size: 13px;
-}
 
 .reprint-label {
   overflow: hidden;
@@ -2300,10 +2126,6 @@ body,
   overflow: auto;
 }
 
-.lock-card .text-button,
-.center-card-foot .text-button {
-  min-height: 44px;
-}
 
 .upload-notice {
   display: flex;
@@ -2583,10 +2405,6 @@ body,
   .camera-empty,
   .video-frame video {
     min-height: 340px;
-  }
-
-  .setup-grid {
-    grid-template-columns: 1fr;
   }
 
   .reprint-label {

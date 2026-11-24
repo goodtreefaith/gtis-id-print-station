@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, net } from 'electron';
 import type { IpcMainInvokeEvent, WebContentsPrintOptions } from 'electron';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isAppUrl } from './appUrl.js';
@@ -13,21 +13,9 @@ import {
   registerCardDocumentScheme,
   waitForCardAssets
 } from './cardCapture.js';
-import {
-  clearDeviceConfig,
-  deviceStatus,
-  loadDeviceConnection,
-  MIN_TOKEN_LENGTH,
-  saveDeviceConfig
-} from './deviceConfig.js';
 import type { FetchLike } from './portalRequest.js';
-import {
-  checkDeviceToken,
-  normalizePortalUrl,
-  PORTAL_HOST_ALLOWLIST,
-  portalRequest,
-  PortalRequestError
-} from './portalRequest.js';
+import { normalizePortalUrl, portalRequest } from './portalRequest.js';
+import { resolvePortalRuntime } from './portalRuntime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,19 +28,12 @@ const netFetch: FetchLike = (input, init) => net.fetch(input, init);
 
 registerCardDocumentScheme();
 
-/**
- * Allowed portal hosts. GTIS_IDPRINT_DEV_PORTAL_HOSTS (comma-separated) is
- * read at runtime and only honoured in an unpackaged dev run, so it cannot
- * widen a release build.
- */
-function allowedPortalHosts(): readonly string[] {
-  const extra = app.isPackaged ? '' : process.env.GTIS_IDPRINT_DEV_PORTAL_HOSTS || '';
-  const hosts = extra
-    .split(',')
-    .map((host) => host.trim().toLowerCase())
-    .filter(Boolean);
-  return [...PORTAL_HOST_ALLOWLIST, ...hosts];
-}
+// Fixed portal (live by default) and live/sample mode, decided at startup
+// from runtime environment variables (see electron/portalRuntime.ts).
+const portalRuntime = resolvePortalRuntime(process.env);
+// Belt and braces: the URL must be https on an allowlisted host.
+const portalBaseUrl = normalizePortalUrl(portalRuntime.portalUrl);
+const portalHost = new URL(portalBaseUrl).host;
 
 function appLocation() {
   return {
@@ -275,63 +256,18 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-ipcMain.handle('device:status', async (event) => {
+ipcMain.handle('portal:info', async (event) => {
   assertMainWindowSender(event);
-  return deviceStatus(allowedPortalHosts());
-});
-
-ipcMain.handle('device:configure', async (event, input: unknown) => {
-  assertMainWindowSender(event);
-  const raw = (input && typeof input === 'object' ? input : {}) as { portalUrl?: unknown; token?: unknown };
-  let portalUrl: string;
-  try {
-    portalUrl = normalizePortalUrl(raw.portalUrl, allowedPortalHosts());
-  } catch (error) {
-    throw new Error(error instanceof PortalRequestError ? error.message : 'The portal address is not valid.');
-  }
-  const token = typeof raw.token === 'string' ? raw.token.trim() : '';
-  if (token.length < MIN_TOKEN_LENGTH || /\s/.test(token) || !/^[\x21-\x7e]+$/.test(token)) {
-    throw new Error(`The device token must be at least ${MIN_TOKEN_LENGTH} characters with no spaces.`);
-  }
-
-  const current = await deviceStatus(allowedPortalHosts());
-  if (!current.encryptionAvailable) {
-    throw new Error(
-      'This computer cannot encrypt the device token (Windows data protection or the system keychain is unavailable). The token was not saved.'
-    );
-  }
-
-  const { check, status } = await checkDeviceToken({ baseUrl: portalUrl, token }, netFetch);
-  logDiagnostic('Device setup token check.', { portalUrl, check, status });
-  if (check !== 'accepted') {
-    // Only a token the portal accepted is ever saved; keep the old setup.
-    return { ...current, check };
-  }
-
-  await saveDeviceConfig(portalUrl, token);
-  logDiagnostic('Device setup saved.', { portalUrl, check });
-  return { ...(await deviceStatus(allowedPortalHosts())), check };
-});
-
-ipcMain.handle('device:clear', async (event) => {
-  assertMainWindowSender(event);
-  await clearDeviceConfig();
-  logDiagnostic('Device setup cleared.');
-  return deviceStatus(allowedPortalHosts());
+  return { portalUrl: portalBaseUrl, mode: portalRuntime.mode };
 });
 
 ipcMain.handle('portal:request', async (event, request: unknown) => {
   assertMainWindowSender(event);
-  const connection = await loadDeviceConnection(allowedPortalHosts(), (message) => logDiagnostic(message));
-  if (!connection) {
-    return {
-      ok: false,
-      status: 0,
-      payload: { status: false, message: 'This station is not set up for the portal yet. Run device setup first.' }
-    };
+  if (portalRuntime.mode !== 'live') {
+    return { ok: false, status: 0, payload: { status: false, message: 'Sample mode: the portal is not used.' } };
   }
   try {
-    const result = await portalRequest(connection, request, netFetch);
+    const result = await portalRequest({ baseUrl: portalBaseUrl }, request, netFetch);
     if (!result.ok) {
       const path = request && typeof request === 'object' ? String((request as { path?: unknown }).path || '').split('?')[0] : '';
       logDiagnostic('Portal request failed.', { path, status: result.status });
@@ -489,17 +425,23 @@ ipcMain.handle('card:capturePngs', async (event, html: string) => {
 
 ipcMain.handle('image:fetchDataUrl', async (event, url: string) => {
   assertMainWindowSender(event);
-  // Photos come from the configured portal's own host (the portal builds
-  // photo_url from its base URL and returns the original upload, not a
-  // thumbnail). The bytes are embedded as-is so the 600 DPI archive keeps
-  // full detail.
-  const status = await deviceStatus(allowedPortalHosts());
-  const allowedHost = status.configured ? new URL(status.portalUrl).host : null;
+  // Photos come from the portal's own host (the portal builds photo_url from
+  // its base URL and returns the original upload, not a thumbnail). The bytes
+  // are embedded as-is so the 600 DPI archive keeps full detail. Sample data
+  // uses inline images, so nothing is downloaded in sample mode.
+  const allowedHost = portalRuntime.mode === 'live' ? portalHost : null;
   return fetchImageDataUrl(url, allowedHost, netFetchManualRedirect);
 });
 
 app.whenReady().then(() => {
   handleCardDocumentProtocol();
+  logDiagnostic('Portal mode.', { portalUrl: portalBaseUrl, mode: portalRuntime.mode });
+  if (portalRuntime.warning) {
+    logDiagnostic(portalRuntime.warning);
+  }
+  // The device token is retired. Remove any encrypted token an earlier
+  // version saved (device setup in the 0.1.9 development builds).
+  void rm(path.join(app.getPath('userData'), 'device-config.json'), { force: true }).catch(() => undefined);
 
   createMainWindow();
 });

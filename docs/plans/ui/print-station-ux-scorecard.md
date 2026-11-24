@@ -2,6 +2,14 @@
 
 > Round 1–3 capture folders are kept out of this public repo to keep it small; only `captures/round-0-baseline/` and `captures/final/` are committed. Round notes below still describe what each round showed.
 
+> **Current state for the PR (device token retired).** The station authenticates only with the
+> staff member's portal login; there is no device token and no Device setup screen. Live or Sample
+> comes from `window.gtPrint.portal.info()`, which is set when the desktop app starts: Sample mode
+> exists only with `GTIS_IDPRINT_SAMPLE=1`, and there is no in-app switch. The lock screen says
+> "Signing in to portal.gtis.edu.ph" (or the test portal host). Task (e) is now sign-in only:
+> 2 typed + Enter. Round notes that mention Device setup, tokens or "Not connected" describe
+> earlier builds. `captures/final/` shows the current build.
+
 Who uses it: school office staff at the Windows NUC (1920×1080), printing CR80 student IDs.
 Who else is affected: the student and guardian who carry the printed card, and portal staff who
 read the archived front/back PNGs in the student's Documents.
@@ -43,7 +51,7 @@ round's captures in `captures/round-N/`.
 | (b) Fix the guardian phone, then print | 3 clicks + 2 typed (click into search, type, phone field, type, Print ID, which already saved edits silently). The phone field needs scrolling at 1280 and 1024, and nothing shows that the edit is unsaved. | 1 typed + 1 click + 1 typed + 1 click or key | 1 click + 2 typed + 1 key, or 2 clicks + 2 typed (phone field, then Print ID, which saves first and says so). No scrolling at any of the three sizes. The harness checks the new phone is on the printed card. | 1 click + 2 typed + 1 key. All editable fields fit on the first screen at 1920 and 1280. Checked by the harness. |
 | (c) Replace the photo, then print | 5 clicks + 1 typed (click into search, Capture Photo, Capture, Save Photo, Print ID) | 4 clicks + 1 typed | 4 clicks + 1 typed (Replace photo, Take photo, Use this photo, Print ID) | 4 clicks + 1 typed |
 | (d) Reprint the last student after moving on | 2 clicks + 1 typed (click into search, type the name again, Print ID) | 1 click | 1 click (Reprint last: name, in the top bar). The harness checks the previous student’s card is sent while another student is selected. | 1 click. Checked by the harness, including Try again after a failed reprint. |
-| (e) First-time setup and sign-in | Setup is impossible in the app: the token is baked in at build time from `.env.local`, which needs a developer rebuild. Sign-in takes 3 clicks + 2 typed. | Setup: 1 typed + 1 click (URL prefilled). Sign-in: 2 typed + 1 key. | Sign-in: 2 typed + 1 key (email is autofocused, Enter submits). Setup: 1 typed + 1 click in the DeviceSetup component (the school portal is preselected; the test portal is the one alternative). The component is built but not wired up yet; it waits for the new preload API. | Delivered in the real app. First run opens Device setup: the school portal is preselected, then paste the token + 1 click. Sign-in: 2 typed + 1 key. Device setup is also reachable from the lock screen (Live) and the top bar (Sample). |
+| (e) Sign-in (was: first-time setup and sign-in) | Setup is impossible in the app: the token is baked in at build time from `.env.local`, which needs a developer rebuild. Sign-in takes 3 clicks + 2 typed. | Setup: 1 typed + 1 click (URL prefilled). Sign-in: 2 typed + 1 key. | Sign-in: 2 typed + 1 key (email is autofocused, Enter submits). Setup: 1 typed + 1 click in the DeviceSetup component (the school portal is preselected; the test portal is the one alternative). The component is built but not wired up yet; it waits for the new preload API. | Delivered in the real app. First run opens Device setup: the school portal is preselected, then paste the token + 1 click. Sign-in: 2 typed + 1 key. Device setup is also reachable from the lock screen (Live) and the top bar (Sample). **Now (device token retired):** sign-in only, 2 typed + Enter (email autofocused); no setup step. |
 
 ## Scores
 

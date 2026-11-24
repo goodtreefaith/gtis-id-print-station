@@ -11,8 +11,8 @@ import type {
 import { studentFullName } from './student';
 
 let students = [...mockStudents];
-// Old builds kept a device token in this localStorage key. It is no longer
-// used; remove it so no token lingers in the renderer profile.
+// Old builds kept a device token in this localStorage key. The device token is
+// retired; remove it so no token lingers in the renderer profile.
 const LEGACY_SETTINGS_STORAGE_KEY = 'gtis-id-print-station.portal-settings';
 const OPERATOR_STORAGE_KEY = 'gtis-id-print-station.operator-session';
 export const DEFAULT_PORTAL_URL = 'https://portal.gtis.edu.ph';
@@ -28,21 +28,18 @@ export function clearLegacyPortalSettings() {
 
 clearLegacyPortalSettings();
 
-/** Sample mode until the station completes device setup (desktop app only). */
+/** Used when there is no desktop bridge (browser-only dev) or sample mode. */
 export const SAMPLE_PORTAL_SETTINGS: PortalSettings = { baseUrl: DEFAULT_PORTAL_URL, live: false };
 
+/** Live unless the desktop app was started in sample mode (GTIS_IDPRINT_SAMPLE=1). */
 export async function loadPortalSettings(): Promise<PortalSettings> {
-  const device = window.gtPrint?.device;
-  if (!device || !window.gtPrint?.portal) {
+  const portal = window.gtPrint?.portal;
+  if (!portal) {
     return SAMPLE_PORTAL_SETTINGS;
   }
 
-  try {
-    const status = await device.status();
-    return { baseUrl: status.portalUrl || DEFAULT_PORTAL_URL, live: status.configured };
-  } catch {
-    return SAMPLE_PORTAL_SETTINGS;
-  }
+  const info = await portal.info();
+  return { baseUrl: info.portalUrl, live: info.mode === 'live' };
 }
 
 export function hasPortalConfig(settings: PortalSettings) {
@@ -354,7 +351,7 @@ async function portalFetch<T>(
     throw new Error('Live portal mode needs the desktop app.');
   }
 
-  // The main process adds the device token; the renderer never sees it.
+  // The main process sends this to the fixed portal with only the operator header.
   const response = await bridge.request({
     method: init.method === 'POST' ? 'POST' : 'GET',
     path,

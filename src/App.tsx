@@ -12,14 +12,12 @@ import {
   Printer,
   RotateCcw,
   Save,
-  Settings,
   Undo2,
   UserRound
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type {
-  DeviceStatus,
   GuardianContact,
   OperatorSession,
   PortalSettings,
@@ -39,6 +37,7 @@ import {
   hasPortalConfig,
   hasValidOperatorSession,
   SAMPLE_PORTAL_SETTINGS,
+  loadPortalSettings,
   loadOperatorSession,
   loginOperator,
   saveOperatorSession,
@@ -53,11 +52,9 @@ import { BACK_TEMPLATE, CardPreview, FRONT_TEMPLATE } from './components/CardPre
 import type { CardSide } from './components/CardPreview';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import type { ConfirmAction } from './components/ConfirmDialog';
-import { DeviceSetup } from './components/DeviceSetup';
 import { Field } from './components/Field';
 import { LockScreen } from './components/LockScreen';
 import { ModeBadge, hostOf } from './components/ModeBadge';
-import type { StationMode } from './components/ModeBadge';
 import { PhotoEditor } from './components/PhotoEditor';
 import { StatusStrip } from './components/StatusStrip';
 import { StudentList } from './components/StudentList';
@@ -70,8 +67,6 @@ import { checkFields, emptyFit, fitLabels } from './ui/validation';
 
 const STUDENT_PAGE_LIMIT = 20;
 const READ_ONLY_MESSAGE = 'This account can print IDs but cannot change portal records.';
-/** Remembers that this station chose Sample mode at first run, so setup does not open every time. */
-const SETUP_SEEN_KEY = 'gtis-id-print-station.device-setup-seen';
 
 interface PrintFieldOptions {
   includeLrn: boolean;
@@ -162,22 +157,6 @@ function timeOf(ms: number) {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-function readSetupSeen() {
-  try {
-    return window.localStorage.getItem(SETUP_SEEN_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeSetupSeen() {
-  try {
-    window.localStorage.setItem(SETUP_SEEN_KEY, '1');
-  } catch {
-    // Storage unavailable: setup simply shows again next time.
-  }
-}
-
 const PRINTER_KEY = 'gtis-id-print-station.printer';
 const PRINTED_KEY_PREFIX = 'gtis-id-print-station.printed-';
 
@@ -243,14 +222,6 @@ function initialName(student: StudentRecord) {
   return [first ? `${first[0]}.` : '', cleanValue(student.lastName)].filter(Boolean).join(' ');
 }
 
-function settingsFor(status: DeviceStatus | null): PortalSettings {
-  return status?.configured ? { baseUrl: status.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS;
-}
-
-function needsAttention(status: DeviceStatus | null) {
-  return Boolean(status && !status.configured && (status.message || (status.portalUrl && !status.tokenReadable)));
-}
-
 export default function App() {
   const [query, setQuery] = useState('');
   const [students, setStudents] = useState<StudentRecord[]>([]);
@@ -273,12 +244,8 @@ export default function App() {
   const [printerOpen, setPrinterOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [portalSettings, setPortalSettings] = useState<PortalSettings>(SAMPLE_PORTAL_SETTINGS);
-  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
-  const [deviceChecked, setDeviceChecked] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(false);
-  /** Device setup opened on purpose from the app or lock screen (not first run): it can be cancelled. */
-  const [setupFromApp, setSetupFromApp] = useState(false);
-  const setupTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [portalChecked, setPortalChecked] = useState(false);
+  const [startError, setStartError] = useState('');
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => loadOperatorSession());
   const [loginDraft, setLoginDraft] = useState({ username: '', password: '' });
   const [loginBusy, setLoginBusy] = useState(false);
@@ -301,11 +268,9 @@ export default function App() {
   const [draftOwner, setDraftOwner] = useState<string | null>(null);
   const liveMode = hasPortalConfig(portalSettings);
   const [flow, setFlow] = useState<FlowState>(() => idleFlow(false));
-  const operatorReady = deviceChecked && (!liveMode || hasValidOperatorSession(operatorSession));
+  const operatorReady = portalChecked && (!liveMode || hasValidOperatorSession(operatorSession));
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
   const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
-  const deviceBridge = window.gtPrint?.device && window.gtPrint?.portal ? window.gtPrint.device : null;
-  const stationMode: StationMode = liveMode ? 'live' : needsAttention(deviceStatus) ? 'attention' : 'sample';
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const printButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -330,41 +295,19 @@ export default function App() {
 
   useEffect(() => {
     void loadOptionalIdCardFont();
-    void refreshDeviceStatus(true);
+    void refreshPortalSettings();
   }, []);
 
-  async function refreshDeviceStatus(firstRun = false) {
-    const bridge = window.gtPrint;
-    let nextStatus: DeviceStatus | null = null;
-    if (bridge?.device && bridge.portal) {
-      try {
-        nextStatus = await bridge.device.status();
-      } catch {
-        nextStatus = null;
-      }
+  /** Live or Sample comes from how the desktop app was started (portal.info); there is no in-app switch. */
+  async function refreshPortalSettings() {
+    try {
+      setPortalSettings(await loadPortalSettings());
+      setStartError('');
+    } catch {
+      setStartError('Could not start the portal connection. Restart the app.');
+      return;
     }
-    setDeviceStatus(nextStatus);
-    setPortalSettings(settingsFor(nextStatus));
-    setDeviceChecked(true);
-    if (firstRun && nextStatus && !nextStatus.configured && (needsAttention(nextStatus) || !readSetupSeen())) {
-      setSetupOpen(true);
-    }
-  }
-
-  function handleDeviceChanged(nextStatus: DeviceStatus) {
-    // A different device setup means a different portal session.
-    clearOperatorSession();
-    setOperatorSession(null);
-    setDeviceStatus(nextStatus);
-    setPortalSettings(settingsFor(nextStatus));
-    setStudents([]);
-    setSelected(null);
-    setLastPrint(null);
-    setPendingUploads([]);
-    setLoadedQuery(null);
-    lastLoadedQueryRef.current = null;
-    setRefreshCount((value) => value + 1);
-    setFlow(idleFlow(Boolean(nextStatus.configured)));
+    setPortalChecked(true);
   }
 
   useEffect(() => {
@@ -386,10 +329,10 @@ export default function App() {
   }, [query, portalSettings, operatorReady, operatorSession?.token, refreshCount]);
 
   useEffect(() => {
-    if (operatorReady && !setupOpen) {
+    if (operatorReady) {
       window.setTimeout(() => searchRef.current?.focus(), 0);
     }
-  }, [operatorReady, setupOpen]);
+  }, [operatorReady]);
 
   async function loadStudents(page: number, replace: boolean, isCanceled = () => false) {
     setLoadingStudents(true);
@@ -1087,7 +1030,7 @@ export default function App() {
   }
 
   function handleRefreshStudents() {
-    void refreshDeviceStatus();
+    void refreshPortalSettings();
     setStudentPage(1);
     setListError('');
     setRefreshCount((value) => value + 1);
@@ -1164,24 +1107,6 @@ export default function App() {
     setFlow(idleFlow(liveMode));
   }
 
-  function closeSetup() {
-    writeSetupSeen();
-    setSetupOpen(false);
-    setSetupFromApp(false);
-  }
-
-  function openSetupFromApp() {
-    setSetupFromApp(true);
-    setSetupOpen(true);
-  }
-
-  function cancelSetup() {
-    setSetupOpen(false);
-    setSetupFromApp(false);
-    // Back to the button that opened it.
-    window.setTimeout(() => setupTriggerRef.current?.focus(), 0);
-  }
-
   // Keyboard: Ctrl/Cmd+P prints, Ctrl/Cmd+S saves, Ctrl/Cmd+F or "/" finds.
   const keyActions = useRef({ print: () => {}, save: () => {} });
   keyActions.current = {
@@ -1193,7 +1118,7 @@ export default function App() {
     },
     save: () => void handleSaveAll()
   };
-  const modalOpen = captureOpen || Boolean(pendingSwitch) || Boolean(confirm) || setupOpen;
+  const modalOpen = captureOpen || Boolean(pendingSwitch) || Boolean(confirm);
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (modalOpen) return;
@@ -1289,25 +1214,13 @@ export default function App() {
     setFit((current) => ((Object.keys(report) as Array<keyof FitReport>).some((key) => report[key] !== current[key]) ? report : current));
   }, []);
 
-  if (!deviceChecked) {
+  if (!portalChecked) {
     return (
-      <main className="center-shell" aria-busy="true">
-        <p className="center-card-foot">Checking this station’s setup…</p>
+      <main className="center-shell" aria-busy={!startError}>
+        <p className={startError ? 'form-alert' : 'center-card-foot'} role={startError ? 'alert' : undefined}>
+          {startError || 'Starting…'}
+        </p>
       </main>
-    );
-  }
-
-  if (setupOpen && deviceBridge) {
-    return (
-      <DeviceSetup
-        status={() => deviceBridge.status()}
-        configure={(input) => deviceBridge.configure(input)}
-        clear={() => deviceBridge.clear()}
-        errorMessage={(error) => bridgeErrorMessage(error, '')}
-        onChanged={handleDeviceChanged}
-        onClose={() => closeSetup()}
-        onCancel={setupFromApp ? cancelSetup : undefined}
-      />
     );
   }
 
@@ -1321,7 +1234,6 @@ export default function App() {
         busy={loginBusy}
         error={loginError}
         portalHost={hostOf(portalSettings.baseUrl)}
-        onDeviceSetup={deviceBridge ? openSetupFromApp : undefined}
       />
     );
   }
@@ -1409,12 +1321,7 @@ export default function App() {
             <span>Good Tree International School · 2026–2027 cards</span>
           </div>
         </div>
-        <ModeBadge mode={stationMode} portalHost={hostOf(portalSettings.baseUrl)} />
-        {deviceBridge && !liveMode ? (
-          <button ref={setupTriggerRef} type="button" className="button ghost" onClick={openSetupFromApp}>
-            <Settings size={18} aria-hidden="true" /> Device setup
-          </button>
-        ) : null}
+        <ModeBadge mode={liveMode ? 'live' : 'sample'} portalHost={hostOf(portalSettings.baseUrl)} />
         <div className="topbar-spacer" />
         {lastPrint ? (
           <button

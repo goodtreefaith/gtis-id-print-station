@@ -12,12 +12,11 @@ export interface LockScreenProps {
   busy: boolean;
   /** Error from the last sign-in attempt, in plain words. */
   error?: string;
+  /** Host this sign-in goes to: portal.gtis.edu.ph, or the test portal. */
   portalHost: string;
-  /** Opens Device setup (for admins). */
-  onDeviceSetup?: () => void;
 }
 
-export function LockScreen({ username, password, onChange, onSubmit, busy, error, portalHost, onDeviceSetup }: LockScreenProps) {
+export function LockScreen({ username, password, onChange, onSubmit, busy, error, portalHost }: LockScreenProps) {
   const [showPassword, setShowPassword] = useState(false);
   return (
     <main className="center-shell">
@@ -26,7 +25,9 @@ export function LockScreen({ username, password, onChange, onSubmit, busy, error
           <div className="brand-mark" aria-hidden="true">GT</div>
           <div>
             <h1 id="lock-title">Sign in to print IDs</h1>
-            <p>Use your GTIS portal account. The station locks again when you sign out.</p>
+            <p>
+              Signing in to <strong>{portalHost}</strong> with your GTIS portal account. The station locks again when you sign out.
+            </p>
           </div>
         </header>
         <ModeBadge mode="live" portalHost={portalHost} />
@@ -65,17 +66,7 @@ export function LockScreen({ username, password, onChange, onSubmit, busy, error
         <button className="button primary large wide" disabled={busy || !username.trim() || !password}>
           <LogIn size={18} aria-hidden="true" /> {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="center-card-foot">
-          Press Enter to sign in.
-          {onDeviceSetup ? (
-            <>
-              {' '}
-              <button type="button" className="text-button" onClick={onDeviceSetup}>
-                Device setup (admins)
-              </button>
-            </>
-          ) : null}
-        </p>
+        <p className="center-card-foot">Press Enter to sign in.</p>
       </form>
     </main>
   );
