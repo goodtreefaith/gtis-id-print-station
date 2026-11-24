@@ -1,27 +1,37 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, screen } from 'electron';
-import type { WebContentsPrintOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net } from 'electron';
+import type { IpcMainInvokeEvent, WebContentsPrintOptions } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  captureArchivePngs,
+  handleCardDocumentProtocol,
+  loadCardDocument,
+  registerCardDocumentScheme,
+  waitForCardAssets
+} from './cardCapture.js';
+import {
+  clearDeviceConfig,
+  deviceStatus,
+  loadDeviceConnection,
+  MIN_TOKEN_LENGTH,
+  saveDeviceConfig
+} from './deviceConfig.js';
+import type { FetchLike } from './portalRequest.js';
+import { checkDeviceToken, normalizePortalUrl, portalRequest, PortalRequestError } from './portalRequest.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 const CR80_PAGE_SIZE = { width: 53980, height: 85600 };
-const PRINT_CAPTURE_DPI = 600;
-const CR80_CAPTURE_SIZE = {
-  width: Math.round((53.98 / 25.4) * PRINT_CAPTURE_DPI),
-  height: Math.round((85.6 / 25.4) * PRINT_CAPTURE_DPI)
-};
-const pendingPrintJobs = new Map<string, string>();
-let printJobCounter = 0;
+// Portal calls use Chromium's network stack (system proxy and Windows
+// certificate store), like the renderer's fetch did before.
+const netFetch: FetchLike = (input, init) => net.fetch(input, init);
 
-protocol.registerSchemesAsPrivileged([
-  { scheme: 'gtis-print', privileges: { standard: true, secure: true } }
-]);
+registerCardDocumentScheme();
 
 function logDiagnostic(message: string, details?: unknown) {
   const detailText = details === undefined ? '' : ` ${JSON.stringify(details)}`;
@@ -121,38 +131,6 @@ function createMainWindow() {
   }
 }
 
-async function waitForPrintAssets(printWindow: BrowserWindow) {
-  return printWindow.webContents.executeJavaScript(`
-    (async () => {
-      const images = Array.from(document.images || []);
-      await Promise.all(images.map((image) => {
-        if (image.complete && image.naturalWidth > 0) {
-          return Promise.resolve();
-        }
-        if (image.complete) {
-          return Promise.resolve();
-        }
-
-        return new Promise((resolve) => {
-          image.addEventListener('load', resolve, { once: true });
-          image.addEventListener('error', resolve, { once: true });
-        });
-      }));
-
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
-      }
-
-      return {
-        imageCount: images.length,
-        failedImages: images
-          .filter((image) => !image.complete || image.naturalWidth === 0)
-          .map((image) => image.currentSrc || image.src || '')
-      };
-    })()
-  `);
-}
-
 async function verifyPrintRender(printWindow: BrowserWindow) {
   return printWindow.webContents.executeJavaScript(`
     (() => {
@@ -196,14 +174,8 @@ async function createPrintWindow(html: string, options: { visible?: boolean } = 
   });
 
   try {
-    const jobId = `job-${++printJobCounter}-${Date.now()}`;
-    pendingPrintJobs.set(jobId, html);
-    try {
-      await printWindow.loadURL(`gtis-print://${jobId}/card.html`);
-    } finally {
-      pendingPrintJobs.delete(jobId);
-    }
-    const assets = await waitForPrintAssets(printWindow);
+    await loadCardDocument(printWindow, html);
+    const assets = await waitForCardAssets(printWindow);
     const renderCheck = await verifyPrintRender(printWindow);
     if (!renderCheck.ok) {
       logDiagnostic('Print render sanity check failed.', renderCheck);
@@ -228,63 +200,95 @@ async function createPrintWindow(html: string, options: { visible?: boolean } = 
 }
 
 async function captureCardPngs(html: string) {
-  const { printWindow } = await createPrintWindow(html);
+  if (typeof html !== 'string' || html === '') {
+    throw new Error('Archive HTML is required.');
+  }
+  const capture = await captureArchivePngs(html, logDiagnostic);
+  logDiagnostic('ID card archive captured.', {
+    width: capture.width,
+    height: capture.height,
+    frontBytes: capture.frontBytes,
+    backBytes: capture.backBytes
+  });
+  return { front: capture.front, back: capture.back, dpi: capture.dpi };
+}
 
-  try {
-    const displayScaleFactor = screen.getDisplayMatching(printWindow.getBounds()).scaleFactor || 1;
-    const captureZoom = PRINT_CAPTURE_DPI / (96 * displayScaleFactor);
-    printWindow.webContents.setZoomFactor(captureZoom);
-    await delay(350);
-
-    const pageBounds = await printWindow.webContents.executeJavaScript(`
-      (() => Array.from(document.querySelectorAll('.page')).map((page) => {
-        const rect = page.getBoundingClientRect();
-        return {
-          x: rect.x + window.scrollX,
-          y: rect.y + window.scrollY,
-          width: rect.width,
-          height: rect.height
-        };
-      }))()
-    `);
-
-    if (!Array.isArray(pageBounds) || pageBounds.length !== 2) {
-      throw new Error('Could not locate the front and back card pages for upload.');
-    }
-
-    const captureRects = pageBounds.map((bounds) => ({
-      x: Math.max(0, Math.floor(Number(bounds.x || 0) * captureZoom)),
-      y: Math.max(0, Math.floor(Number(bounds.y || 0) * captureZoom)),
-      width: Math.ceil(Number(bounds.width || 0) * captureZoom),
-      height: Math.ceil(Number(bounds.height || 0) * captureZoom)
-    }));
-    printWindow.setContentSize(
-      Math.max(...captureRects.map((rect) => rect.x + rect.width)),
-      Math.max(...captureRects.map((rect) => rect.y + rect.height))
-    );
-    await delay(250);
-
-    const captures = await Promise.all(captureRects.map(async (rect, index) => {
-
-      const image = await printWindow.webContents.capturePage(rect);
-      const size = image.getSize();
-      if (size.width < CR80_CAPTURE_SIZE.width || size.height < CR80_CAPTURE_SIZE.height) {
-        logDiagnostic('ID card PNG capture was smaller than 600 DPI.', { index, rect, size, expected: CR80_CAPTURE_SIZE });
-        throw new Error('The ID card archive image was not captured at full quality. Nothing was uploaded.');
-      }
-
-      return image.toDataURL();
-    }));
-
-    return {
-      front: captures[0],
-      back: captures[1],
-      dpi: PRINT_CAPTURE_DPI
-    };
-  } finally {
-    printWindow.destroy();
+function assertMainWindowSender(event: IpcMainInvokeEvent) {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('This request is only allowed from the ID print station window.');
   }
 }
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+ipcMain.handle('device:status', async (event) => {
+  assertMainWindowSender(event);
+  return deviceStatus();
+});
+
+ipcMain.handle('device:configure', async (event, input: unknown) => {
+  assertMainWindowSender(event);
+  const raw = (input && typeof input === 'object' ? input : {}) as { portalUrl?: unknown; token?: unknown };
+  let portalUrl: string;
+  try {
+    portalUrl = normalizePortalUrl(raw.portalUrl);
+  } catch (error) {
+    throw new Error(error instanceof PortalRequestError ? error.message : 'The portal address is not valid.');
+  }
+  const token = typeof raw.token === 'string' ? raw.token.trim() : '';
+  if (token.length < MIN_TOKEN_LENGTH || /\s/.test(token) || !/^[\x21-\x7e]+$/.test(token)) {
+    throw new Error(`The device token must be at least ${MIN_TOKEN_LENGTH} characters with no spaces.`);
+  }
+
+  const current = await deviceStatus();
+  if (!current.encryptionAvailable) {
+    throw new Error(
+      'This computer cannot encrypt the device token (Windows data protection or the system keychain is unavailable). The token was not saved.'
+    );
+  }
+
+  const { check, status } = await checkDeviceToken({ baseUrl: portalUrl, token }, netFetch);
+  logDiagnostic('Device setup token check.', { portalUrl, check, status });
+  if (check === 'rejected') {
+    // Keep whatever was configured before; a wrong token is never saved.
+    return { ...current, check };
+  }
+
+  await saveDeviceConfig(portalUrl, token);
+  logDiagnostic('Device setup saved.', { portalUrl, check });
+  return { ...(await deviceStatus()), check };
+});
+
+ipcMain.handle('device:clear', async (event) => {
+  assertMainWindowSender(event);
+  await clearDeviceConfig();
+  logDiagnostic('Device setup cleared.');
+  return deviceStatus();
+});
+
+ipcMain.handle('portal:request', async (event, request: unknown) => {
+  assertMainWindowSender(event);
+  const connection = await loadDeviceConnection((message) => logDiagnostic(message));
+  if (!connection) {
+    return {
+      ok: false,
+      status: 0,
+      payload: { status: false, message: 'This station is not set up for the portal yet. Run device setup first.' }
+    };
+  }
+  try {
+    const result = await portalRequest(connection, request, netFetch);
+    if (!result.ok) {
+      const path = request && typeof request === 'object' ? String((request as { path?: unknown }).path || '').split('?')[0] : '';
+      logDiagnostic('Portal request failed.', { path, status: result.status });
+    }
+    return result;
+  } catch (error) {
+    return { ok: false, status: 0, payload: { status: false, message: errorMessage(error, 'Portal request failed.') } };
+  }
+});
 
 ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
   const filePath = resolvePublicAsset(assetPath);
@@ -425,7 +429,18 @@ ipcMain.handle('card:savePdf', async (_event, html: string) => {
 ipcMain.handle('card:capturePngs', async (_event, html: string) => captureCardPngs(html));
 
 ipcMain.handle('image:fetchDataUrl', async (_event, url: string) => {
-  const image = await downloadImage(url);
+  let parsed: URL;
+  try {
+    parsed = new URL(String(url));
+  } catch {
+    throw new Error('Image address is not valid.');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('Images can only be downloaded over http or https.');
+  }
+  // The portal returns the original uploaded photo (not a thumbnail); it is
+  // embedded byte-for-byte so the 600 DPI archive keeps full detail.
+  const image = await downloadImage(parsed.toString());
   if (!image.ok) {
     throw new Error(`Image fetch failed: ${image.status}`);
   }
@@ -502,15 +517,7 @@ function downloadImage(url: string, redirectCount = 0): Promise<ImageDownload> {
 }
 
 app.whenReady().then(() => {
-  protocol.handle('gtis-print', (request) => {
-    const url = new URL(request.url);
-    const jobId = url.hostname;
-    const html = pendingPrintJobs.get(jobId);
-    if (!html) {
-      return new Response('Print job not found.', { status: 404, headers: { 'content-type': 'text/plain' } });
-    }
-    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
-  });
+  handleCardDocumentProtocol();
 
   createMainWindow();
 });

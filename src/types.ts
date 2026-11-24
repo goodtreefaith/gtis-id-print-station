@@ -29,10 +29,14 @@ export interface StudentRecord {
   esc?: string;
 }
 
+/**
+ * Renderer view of the portal connection. Holds no secret: the device token
+ * lives only in the Electron main process (see window.gtPrint.device).
+ * live = this station has completed device setup.
+ */
 export interface PortalSettings {
   baseUrl: string;
-  token: string;
-  useMock: boolean;
+  live: boolean;
 }
 
 export interface OperatorSession {
@@ -72,6 +76,48 @@ export interface PrintResult {
   failureReason?: string;
 }
 
+export interface DeviceStatus {
+  configured: boolean;
+  portalUrl: string;
+  /** Last 4 characters of the stored token at most; never the token. */
+  tokenHint: string;
+  encryptionAvailable: boolean;
+}
+
+export type DeviceTokenCheck = 'accepted' | 'rejected' | 'unreachable';
+
+export interface DeviceConfigureResult extends DeviceStatus {
+  /** accepted: saved and the portal knows the token. rejected: NOT saved.
+   * unreachable: saved, but the portal could not confirm it. */
+  check: DeviceTokenCheck;
+}
+
+export interface PortalBridgeRequest {
+  method: 'GET' | 'POST';
+  /** Must start with /idprintapi/. */
+  path: string;
+  body?: unknown;
+  operatorToken?: string;
+}
+
+export interface PortalBridgeResponse {
+  ok: boolean;
+  /** HTTP status, or 0 when the portal could not be reached. */
+  status: number;
+  payload: unknown;
+}
+
+export interface DeviceBridge {
+  status: () => Promise<DeviceStatus>;
+  /** Rejects with a readable message for invalid input or unavailable encryption. */
+  configure: (input: { portalUrl: string; token: string }) => Promise<DeviceConfigureResult>;
+  clear: () => Promise<DeviceStatus>;
+}
+
+export interface PortalBridge {
+  request: (req: PortalBridgeRequest) => Promise<PortalBridgeResponse>;
+}
+
 export interface PrintStationBridge {
   listPrinters: () => Promise<PrinterInfo[]>;
   printCard: (
@@ -82,6 +128,8 @@ export interface PrintStationBridge {
   captureCardPngs?: (html: string) => Promise<{ front: string; back: string; dpi: number }>;
   fetchImageDataUrl?: (url: string) => Promise<string>;
   readAssetDataUrl?: (assetPath: string) => Promise<string | null>;
+  device?: DeviceBridge;
+  portal?: PortalBridge;
 }
 
 declare global {

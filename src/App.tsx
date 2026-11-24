@@ -14,6 +14,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ChangeEvent, FormEvent } from 'react';
 import type {
+  DeviceStatus,
   GuardianContact,
   OperatorSession,
   PortalSettings,
@@ -33,7 +34,7 @@ import {
 } from './lib/cardText';
 import { loadOptionalIdCardFont, optionalIdCardFontFaceCss } from './lib/fonts';
 import { cardLayers } from './lib/layout';
-import { renderPrintHtml } from './lib/printHtml';
+import { renderArchiveHtml, renderPrintHtml } from './lib/printHtml';
 import { makeAdmissionQr } from './lib/qr';
 import {
   readinessFor,
@@ -44,10 +45,11 @@ import {
   studentLastNameLine
 } from './lib/student';
 import {
+  bridgeErrorMessage,
   clearOperatorSession,
   hasPortalConfig,
   hasValidOperatorSession,
-  loadPortalSettings,
+  SAMPLE_PORTAL_SETTINGS,
   loadOperatorSession,
   loginOperator,
   saveOperatorSession,
@@ -152,23 +154,50 @@ export default function App() {
   const [selectedPrinter, setSelectedPrinter] = useState('');
   const [silentPrint, setSilentPrint] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [portalSettings, setPortalSettings] = useState<PortalSettings>(() => loadPortalSettings());
+  const [portalSettings, setPortalSettings] = useState<PortalSettings>(SAMPLE_PORTAL_SETTINGS);
+  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
+  const [deviceChecked, setDeviceChecked] = useState(false);
+  const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => loadOperatorSession());
   const [loginDraft, setLoginDraft] = useState({ username: '', password: '' });
   const [loginBusy, setLoginBusy] = useState(false);
-  const [status, setStatus] = useState(() =>
-    hasPortalConfig(loadPortalSettings())
-      ? 'Sign in with your portal account.'
-      : 'Sample data loaded for local testing.'
-  );
+  const [status, setStatus] = useState('Checking device setup...');
   const liveMode = hasPortalConfig(portalSettings);
-  const operatorReady = !liveMode || hasValidOperatorSession(operatorSession);
+  const operatorReady = deviceChecked && (!liveMode || hasValidOperatorSession(operatorSession));
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
   const operatorCanEditPortal = !liveMode || operatorSession?.permissions?.canEdit !== false;
 
   useEffect(() => {
     void loadOptionalIdCardFont();
+    void refreshDeviceStatus();
   }, []);
+
+  async function refreshDeviceStatus() {
+    const bridge = window.gtPrint;
+    let nextStatus: DeviceStatus | null = null;
+    if (bridge?.device && bridge.portal) {
+      try {
+        nextStatus = await bridge.device.status();
+      } catch {
+        nextStatus = null;
+      }
+    }
+    setDeviceStatus(nextStatus);
+    setPortalSettings(
+      nextStatus?.configured ? { baseUrl: nextStatus.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS
+    );
+    setDeviceChecked(true);
+  }
+
+  function handleDeviceChanged(nextStatus: DeviceStatus, message: string) {
+    // A different device setup means a different portal session.
+    clearOperatorSession();
+    setOperatorSession(null);
+    setDeviceStatus(nextStatus);
+    setPortalSettings(nextStatus.configured ? { baseUrl: nextStatus.portalUrl, live: true } : SAMPLE_PORTAL_SETTINGS);
+    setRefreshCount((value) => value + 1);
+    setStatus(message);
+  }
 
   useEffect(() => {
     if (!operatorReady) {
@@ -417,7 +446,7 @@ export default function App() {
     return current;
   }
 
-  async function buildPrintHtml(studentOverride?: StudentRecord | null) {
+  async function buildCardDocuments(studentOverride?: StudentRecord | null) {
     const studentToRender = studentOverride
       ? printableStudent(studentOverride, nameDraft, guardianDraft, idDraft, printFields)
       : previewStudent;
@@ -436,7 +465,13 @@ export default function App() {
       studentForPrint.photoUrl = await imageSourceToDataUrl(studentForPrint.photoUrl, portalSettings.baseUrl);
     }
 
-    return renderPrintHtml(studentForPrint, qrDataUrl, { front, back, idCardFontFaceCss });
+    const assets = { front, back, idCardFontFaceCss };
+    return {
+      // Printer copy: back rotated 180 degrees for the card flip.
+      printHtml: renderPrintHtml(studentForPrint, qrDataUrl, assets),
+      // Portal Documents copy: both sides upright.
+      archiveHtml: renderArchiveHtml(studentForPrint, qrDataUrl, assets)
+    };
   }
 
   async function handleSaveName() {
@@ -543,7 +578,7 @@ export default function App() {
     try {
       setStatus('Checking edited fields...');
       const syncedStudent = await syncEditableDraftsBeforePrint();
-      const html = await buildPrintHtml(syncedStudent);
+      const { printHtml: html, archiveHtml } = await buildCardDocuments(syncedStudent);
       if (window.gtPrint) {
         setStatus(silentPrint ? 'Sending print job...' : 'Opening Windows print dialog...');
         const result = await window.gtPrint.printCard(html, {
@@ -559,7 +594,7 @@ export default function App() {
                 throw new Error('This app version cannot capture the printed ID for upload.');
               }
               setStatus(`${printStatus} Uploading ID front/back to Documents...`);
-              const images = await window.gtPrint.captureCardPngs(html);
+              const images = await window.gtPrint.captureCardPngs(archiveHtml);
               await uploadIdCardDocuments(
                 syncedStudent.id,
                 { front: images.front, back: images.back },
@@ -603,7 +638,7 @@ export default function App() {
 
     setBusy(true);
     try {
-      const html = await buildPrintHtml();
+      const { printHtml: html } = await buildCardDocuments();
       if (!window.gtPrint) {
         throw new Error('Save PDF is available in the desktop app.');
       }
@@ -623,7 +658,7 @@ export default function App() {
   }
 
   function handleRefreshStudents() {
-    setPortalSettings(loadPortalSettings());
+    void refreshDeviceStatus();
     setStudentPage(1);
     setRefreshCount((value) => value + 1);
     setStatus('Refreshing students...');
@@ -663,6 +698,14 @@ export default function App() {
     setStatus('Signed out.');
   }
 
+  if (!deviceChecked) {
+    return (
+      <main className="login-shell">
+        <div className="status-line">{status}</div>
+      </main>
+    );
+  }
+
   if (!operatorReady) {
     return (
       <main className="login-shell">
@@ -689,6 +732,7 @@ export default function App() {
             <LogIn size={17} /> {loginBusy ? 'Signing in...' : 'Sign In'}
           </button>
           <div className="status-line">{status}</div>
+          <DeviceSetupPanel status={deviceStatus} onChanged={handleDeviceChanged} />
         </form>
       </main>
     );
@@ -758,6 +802,17 @@ export default function App() {
               {selected ? `${studentFullName(selected)} - ${selected.admissionNo}` : 'Select a student.'}
               {liveMode && operatorSession ? ` - Signed in: ${operatorSession.name}` : ''}
             </p>
+            {!liveMode ? (
+              <p>
+                <strong>Sample mode</strong> - not connected to the portal. Changes stay on this computer.{' '}
+                {deviceStatus ? (
+                  <button type="button" className="icon-text-button" onClick={() => setDeviceSetupOpen((open) => !open)}>
+                    {deviceSetupOpen ? 'Hide device setup' : 'Device setup'}
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
+
           </div>
           <div className="topbar-actions">
             {liveMode ? (
@@ -787,6 +842,11 @@ export default function App() {
           </section>
 
           <aside className="control-panel">
+            {!liveMode && deviceSetupOpen ? (
+              <section className="panel-section">
+                <DeviceSetupPanel status={deviceStatus} onChanged={handleDeviceChanged} />
+              </section>
+            ) : null}
             {selected && readiness && nameDraft && guardianDraft && idDraft ? (
               <>
                 <section className="panel-section">
@@ -944,6 +1004,113 @@ function CheckList({ items }: { items: Array<[string, boolean]> }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Plain one-time device setup. The token goes straight to the main process,
+ * is encrypted there, and is never shown again (only its last 4 characters).
+ */
+function DeviceSetupPanel({
+  status,
+  onChanged
+}: {
+  status: DeviceStatus | null;
+  onChanged: (status: DeviceStatus, message: string) => void;
+}) {
+  const [portalUrl, setPortalUrl] = useState(status?.portalUrl || 'https://portal.gtis.edu.ph');
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const device = window.gtPrint?.device;
+
+  if (!device || !status) {
+    return null;
+  }
+
+  let portalHost = status.portalUrl;
+  try {
+    portalHost = new URL(status.portalUrl).host;
+  } catch {
+    // Show the stored value as-is.
+  }
+
+  async function handleSave() {
+    if (!device) {
+      return;
+    }
+    setBusy(true);
+    setMessage('Checking the token with the portal...');
+    try {
+      const result = await device.configure({ portalUrl, token });
+      setToken('');
+      if (result.check === 'rejected') {
+        setMessage('The portal rejected this device token. Nothing was saved.');
+        return;
+      }
+      const text =
+        result.check === 'accepted'
+          ? 'Device set up. The portal accepted the token.'
+          : 'Device token saved, but the portal could not confirm it right now. Sign-in will fail if the token is wrong.';
+      setMessage(text);
+      onChanged(result, text);
+    } catch (error) {
+      setMessage(bridgeErrorMessage(error, 'Device setup failed.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleClear() {
+    if (!device || !window.confirm('Remove the saved device token from this computer? The station returns to sample mode.')) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await device.clear();
+      setMessage('Device token removed.');
+      onChanged(next, 'Device token removed. Sample mode.');
+    } catch (error) {
+      setMessage(bridgeErrorMessage(error, 'Could not remove the device token.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (status.configured) {
+    return (
+      <div className="device-setup">
+        <p>
+          Portal: {portalHost}
+          {status.tokenHint ? ` - device token ending ${status.tokenHint}` : ''}
+        </p>
+        <button type="button" className="icon-text-button" onClick={handleClear} disabled={busy}>
+          Reset device setup
+        </button>
+        {message ? <p>{message}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="device-setup">
+      <h2>Device setup</h2>
+      <p>For school IT: enter the portal address and this station's device token once. It is stored encrypted on this computer.</p>
+      {!status.encryptionAvailable ? (
+        <p>This computer cannot encrypt the token, so it cannot be saved here.</p>
+      ) : null}
+      <Field label="Portal address" value={portalUrl} onChange={setPortalUrl} />
+      <Field label="Device token" type="password" value={token} onChange={setToken} />
+      <button
+        type="button"
+        className="button secondary"
+        onClick={handleSave}
+        disabled={busy || !status.encryptionAvailable || !portalUrl.trim() || !token.trim()}
+      >
+        {busy ? 'Checking...' : 'Save device setup'}
+      </button>
+      {message ? <p>{message}</p> : null}
+    </div>
   );
 }
 
