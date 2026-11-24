@@ -1,7 +1,7 @@
 name: Build Windows EXE
 
 # This workflow is deliberately tokenless: no secrets are passed to the build.
-# The device token is entered on the station (Device setup), never compiled in.
+# Staff sign in with their own portal login; no token is compiled in or entered.
 
 on:
   workflow_dispatch:
