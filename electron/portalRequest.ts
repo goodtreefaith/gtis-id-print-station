@@ -23,6 +23,8 @@ export interface PortalBridgeResponse {
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export const PORTAL_PATH_PREFIX = '/idprintapi/';
+/** The only portal hosts a packaged station may be set up against. */
+export const PORTAL_HOST_ALLOWLIST: readonly string[] = ['portal.gtis.edu.ph', 'preportal.gtis.edu.ph'];
 const DEFAULT_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 
@@ -33,11 +35,11 @@ function failure(message: string, status = 0): PortalBridgeResponse {
 }
 
 /**
- * Accepts only https portal origins (optionally with a base path), with no
- * credentials, query or fragment. Returns the normalised base URL without a
- * trailing slash.
+ * Accepts only https portal origins on an allowlisted host (optionally with a
+ * base path), with no port, credentials, query or fragment. Returns the
+ * normalised base URL without a trailing slash.
  */
-export function normalizePortalUrl(input: unknown) {
+export function normalizePortalUrl(input: unknown, allowedHosts: readonly string[] = PORTAL_HOST_ALLOWLIST) {
   if (typeof input !== 'string' || input.trim() === '') {
     throw new PortalRequestError('Enter the portal address, for example https://portal.gtis.edu.ph.');
   }
@@ -52,8 +54,11 @@ export function normalizePortalUrl(input: unknown) {
   if (url.protocol !== 'https:') {
     throw new PortalRequestError('The portal address must start with https://.');
   }
-  if (url.username || url.password || url.search || url.hash) {
-    throw new PortalRequestError('The portal address must not contain a user name, password, query or #fragment.');
+  if (url.username || url.password || url.search || url.hash || url.port) {
+    throw new PortalRequestError('The portal address must not contain a port, user name, password, query or #fragment.');
+  }
+  if (!allowedHosts.includes(url.hostname.toLowerCase())) {
+    throw new PortalRequestError(`The portal address must be one of: ${allowedHosts.map((host) => `https://${host}`).join(', ')}.`);
   }
 
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;

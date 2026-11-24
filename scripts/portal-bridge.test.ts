@@ -2,9 +2,12 @@
 // Never contacts a real portal. Run with `npm run test:bridge`.
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { isAppUrl } from '../electron/appUrl';
+import { fetchImageDataUrl, MAX_IMAGE_BYTES } from '../electron/imageFetch';
 import {
   checkDeviceToken,
   normalizePortalUrl,
+  PORTAL_HOST_ALLOWLIST,
   portalRequest,
   PortalRequestError
 } from '../electron/portalRequest';
@@ -39,6 +42,34 @@ const portal = createServer((req, res) => {
       res.end();
       return;
     }
+    if (req.url?.startsWith('/uploads/')) {
+      const png = Buffer.from('89504e470d0a1a0a', 'hex');
+      if (req.url === '/uploads/photo.jpg') {
+        res.setHeader('content-type', 'image/jpeg');
+        res.end(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(1000, 7)]));
+      } else if (req.url === '/uploads/same-host-redirect.jpg') {
+        res.statusCode = 302;
+        res.setHeader('location', '/uploads/photo.jpg');
+        res.end();
+      } else if (req.url === '/uploads/other-host-redirect.jpg') {
+        res.statusCode = 302;
+        res.setHeader('location', `http://127.0.0.1:${(other.address() as AddressInfo).port}/steal.jpg`);
+        res.end();
+      } else if (req.url === '/uploads/page.svg') {
+        res.setHeader('content-type', 'image/svg+xml');
+        res.end('<svg/>');
+      } else if (req.url === '/uploads/fake.png') {
+        res.setHeader('content-type', 'image/png; charset=binary');
+        res.end(png);
+      } else if (req.url === '/uploads/huge.png') {
+        res.setHeader('content-type', 'image/png');
+        res.end(Buffer.alloc(2048, 1));
+      } else {
+        res.setHeader('content-type', 'text/html');
+        res.end('<html></html>');
+      }
+      return;
+    }
     if (req.url === '/idprintapi/slow') {
       setTimeout(() => res.end('{"status":true}'), 2000);
       return;
@@ -69,13 +100,16 @@ async function main() {
   const port = await listen(portal);
   const baseUrl = `http://127.0.0.1:${port}`;
   const connection = { baseUrl, token: FAKE_TOKEN };
-  // Under Electron, use net.fetch exactly as electron/main.ts does.
+  // Under Electron, use net.fetch / net.request exactly as electron/main.ts does.
   let fetchImpl = (input: string, init: RequestInit) => fetch(input, init);
+  let photoFetch = fetchImpl;
   if (process.versions.electron) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { app, net } = require('electron') as typeof import('electron');
     await app.whenReady();
     fetchImpl = (input: string, init: RequestInit) => net.fetch(input, init);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    photoFetch = (require('../electron/netManualFetch') as typeof import('../electron/netManualFetch')).netFetchManualRedirect;
     console.log('Using Electron net.fetch');
   }
 
@@ -127,6 +161,41 @@ async function main() {
   check('token check: rejected on 401', (await checkDeviceToken({ baseUrl, token: 'wrong-token-wrong-token-wrong-token-00' }, fetchImpl)).check === 'rejected');
   check('token check: unreachable when down', (await checkDeviceToken({ baseUrl: 'http://127.0.0.1:1', token: FAKE_TOKEN }, fetchImpl)).check === 'unreachable');
 
+  // Photo downloads for the card.
+  const host = `127.0.0.1:${port}`;
+  const photo = (path: string, opts: { maxBytes?: number } = {}) =>
+    fetchImageDataUrl(`${baseUrl}${path}`, host, photoFetch, { requireHttps: false, ...opts }).then(
+      (value) => value,
+      (error: Error) => `ERR ${error.message}`
+    );
+  check('photo: jpeg downloads as data URL', (await photo('/uploads/photo.jpg')).startsWith('data:image/jpeg;base64,'));
+  check('photo: same-host redirect followed', (await photo('/uploads/same-host-redirect.jpg')).startsWith('data:image/jpeg;base64,'));
+  const otherBefore = otherHostHits.length;
+  check('photo: other-host redirect refused', (await photo('/uploads/other-host-redirect.jpg')).startsWith('ERR'));
+  check('photo: other host never contacted', otherHostHits.length === otherBefore);
+  check('photo: svg refused', (await photo('/uploads/page.svg')).startsWith('ERR'));
+  check('photo: html refused', (await photo('/uploads/x.html')).startsWith('ERR'));
+  check('photo: content-type parameters tolerated', (await photo('/uploads/fake.png')).startsWith('data:image/png;base64,'));
+  check('photo: size cap enforced', (await photo('/uploads/huge.png', { maxBytes: 1024 })).includes('15 MB'));
+  check('photo: default cap is 15 MB', MAX_IMAGE_BYTES === 15 * 1024 * 1024);
+  check('photo: other host refused', (await fetchImageDataUrl('http://127.0.0.2:1/x.jpg', host, photoFetch, { requireHttps: false }).then(() => 'ok', () => 'ERR')) === 'ERR');
+  check('photo: http refused by default', (await fetchImageDataUrl(`${baseUrl}/uploads/photo.jpg`, host, photoFetch).then(() => 'ok', () => 'ERR')) === 'ERR');
+  check('photo: refused before device setup', (await fetchImageDataUrl(`${baseUrl}/uploads/photo.jpg`, null, photoFetch, { requireHttps: false }).then(() => 'ok', () => 'ERR')) === 'ERR');
+
+  // Main-window navigation and IPC sender guard (electron/appUrl.ts).
+  const prod = { indexFileUrl: 'file:///C:/Program%20Files/GTIS%20ID%20Print%20Station/resources/app.asar/dist/index.html' };
+  const dev = { devUrl: 'http://127.0.0.1:5173', indexFileUrl: prod.indexFileUrl };
+  check('guard: app page allowed', isAppUrl(prod.indexFileUrl, prod));
+  check('guard: app page with #hash allowed', isAppUrl(`${prod.indexFileUrl}#x`, prod));
+  check('guard: other local file refused', !isAppUrl('file:///C:/Users/staff/Downloads/evil.html', prod));
+  check('guard: UNC file refused', !isAppUrl('file://evil-host/C:/Program%20Files/GTIS%20ID%20Print%20Station/resources/app.asar/dist/index.html', prod));
+  check('guard: web page refused', !isAppUrl('https://portal.gtis.edu.ph/', prod));
+  check('guard: card document scheme refused', !isAppUrl('gtis-print://job-1/card.html', prod));
+  check('guard: data URL refused', !isAppUrl('data:text/html,<script>1</script>', prod));
+  check('guard: dev server allowed in dev', isAppUrl('http://127.0.0.1:5173/src/main.tsx', dev));
+  check('guard: other origin refused in dev', !isAppUrl('http://127.0.0.1:5174/', dev));
+  check('guard: file refused in dev', !isAppUrl(prod.indexFileUrl, dev));
+
   // Portal URL validation used by device setup.
   const throws = (value: unknown) => {
     try {
@@ -137,6 +206,11 @@ async function main() {
     }
   };
   check('portal URL: https accepted and normalised', normalizePortalUrl(' https://portal.gtis.edu.ph/ ') === 'https://portal.gtis.edu.ph');
+  check('portal URL: preportal accepted', normalizePortalUrl('https://preportal.gtis.edu.ph') === 'https://preportal.gtis.edu.ph');
+  check('portal URL: allowlist is exactly the two GTIS hosts', PORTAL_HOST_ALLOWLIST.join(',') === 'portal.gtis.edu.ph,preportal.gtis.edu.ph');
+  check('portal URL: other host refused', throws('https://evil.example'));
+  check('portal URL: look-alike host refused', throws('https://portal.gtis.edu.ph.evil.example'));
+  check('portal URL: port refused', throws('https://portal.gtis.edu.ph:8443'));
   check('portal URL: http rejected', throws('http://portal.gtis.edu.ph'));
   check('portal URL: credentials rejected', throws('https://user:pw@portal.gtis.edu.ph'));
   check('portal URL: query rejected', throws('https://portal.gtis.edu.ph/?x=1'));

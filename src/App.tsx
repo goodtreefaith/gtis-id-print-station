@@ -805,6 +805,7 @@ export default function App() {
             {!liveMode ? (
               <p>
                 <strong>Sample mode</strong> - not connected to the portal. Changes stay on this computer.{' '}
+                {deviceStatus?.message ? `${deviceStatus.message} ` : ''}
                 {deviceStatus ? (
                   <button type="button" className="icon-text-button" onClick={() => setDeviceSetupOpen((open) => !open)}>
                     {deviceSetupOpen ? 'Hide device setup' : 'Device setup'}
@@ -1009,7 +1010,7 @@ function CheckList({ items }: { items: Array<[string, boolean]> }) {
 
 /**
  * Plain one-time device setup. The token goes straight to the main process,
- * is encrypted there, and is never shown again (only its last 4 characters).
+ * is encrypted there, and nothing derived from it is ever shown again.
  */
 function DeviceSetupPanel({
   status,
@@ -1048,10 +1049,11 @@ function DeviceSetupPanel({
         setMessage('The portal rejected this device token. Nothing was saved.');
         return;
       }
-      const text =
-        result.check === 'accepted'
-          ? 'Device set up. The portal accepted the token.'
-          : 'Device token saved, but the portal could not confirm it right now. Sign-in will fail if the token is wrong.';
+      if (result.check !== 'accepted') {
+        setMessage('The portal could not confirm the token (check the internet connection). Nothing was saved; try again.');
+        return;
+      }
+      const text = 'Device set up. The portal accepted the token.';
       setMessage(text);
       onChanged(result, text);
     } catch (error) {
@@ -1080,10 +1082,7 @@ function DeviceSetupPanel({
   if (status.configured) {
     return (
       <div className="device-setup">
-        <p>
-          Portal: {portalHost}
-          {status.tokenHint ? ` - device token ending ${status.tokenHint}` : ''}
-        </p>
+        <p>Portal: {portalHost}</p>
         <button type="button" className="icon-text-button" onClick={handleClear} disabled={busy}>
           Reset device setup
         </button>
@@ -1096,6 +1095,7 @@ function DeviceSetupPanel({
     <div className="device-setup">
       <h2>Device setup</h2>
       <p>For school IT: enter the portal address and this station's device token once. It is stored encrypted on this computer.</p>
+      {status.message ? <p>{status.message}</p> : null}
       {!status.encryptionAvailable ? (
         <p>This computer cannot encrypt the token, so it cannot be saved here.</p>
       ) : null}

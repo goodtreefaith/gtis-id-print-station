@@ -76,19 +76,23 @@ export interface PrintResult {
   failureReason?: string;
 }
 
+/** Device setup status. Contains nothing derived from the token. */
 export interface DeviceStatus {
+  /** A token is saved, readable, and for an allowed portal host (live mode). */
   configured: boolean;
   portalUrl: string;
-  /** Last 4 characters of the stored token at most; never the token. */
-  tokenHint: string;
+  /** The saved token can be decrypted on this computer and Windows account. */
+  tokenReadable: boolean;
   encryptionAvailable: boolean;
+  /** Plain-language note when setup needs attention (e.g. re-enter the token), else ''. */
+  message: string;
 }
 
 export type DeviceTokenCheck = 'accepted' | 'rejected' | 'unreachable';
 
 export interface DeviceConfigureResult extends DeviceStatus {
-  /** accepted: saved and the portal knows the token. rejected: NOT saved.
-   * unreachable: saved, but the portal could not confirm it. */
+  /** Only 'accepted' saves the token. 'rejected' (portal refused it) and
+   * 'unreachable' (no confirmation) save nothing and keep the old setup. */
   check: DeviceTokenCheck;
 }
 

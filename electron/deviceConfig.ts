@@ -9,17 +9,20 @@ export const DEFAULT_PORTAL_URL = 'https://portal.gtis.edu.ph';
 export const MIN_TOKEN_LENGTH = 32;
 
 export interface DeviceStatus {
+  /** A token is saved, readable, and for an allowed portal host. */
   configured: boolean;
   portalUrl: string;
-  tokenHint: string;
+  /** The saved token can be decrypted on this computer and Windows account. */
+  tokenReadable: boolean;
   encryptionAvailable: boolean;
+  /** Plain-language note when setup needs attention, otherwise ''. */
+  message: string;
 }
 
 interface StoredDeviceConfig {
   version: 1;
   portalUrl: string;
   tokenCiphertext: string;
-  tokenHint: string;
   savedAt: string;
 }
 
@@ -39,10 +42,6 @@ export function encryptionAvailable() {
   return true;
 }
 
-function tokenHint(token: string) {
-  return token.length >= 8 ? token.slice(-4) : '';
-}
-
 async function readStoredConfig(): Promise<StoredDeviceConfig | null> {
   try {
     const parsed = JSON.parse(await readFile(configPath(), 'utf8')) as StoredDeviceConfig;
@@ -55,33 +54,61 @@ async function readStoredConfig(): Promise<StoredDeviceConfig | null> {
   }
 }
 
-export async function deviceStatus(): Promise<DeviceStatus> {
-  const stored = await readStoredConfig();
-  return {
-    configured: Boolean(stored),
-    portalUrl: stored?.portalUrl || DEFAULT_PORTAL_URL,
-    tokenHint: stored?.tokenHint || '',
-    encryptionAvailable: encryptionAvailable()
-  };
-}
-
-/** Main-process only. Returns null when not configured or not decryptable. */
-export async function loadDeviceConnection(log: (message: string) => void) {
-  const stored = await readStoredConfig();
-  if (!stored) {
-    return null;
-  }
+function decryptStored(stored: StoredDeviceConfig) {
   if (!encryptionAvailable()) {
-    log('Device token could not be read: OS encryption is unavailable.');
     return null;
   }
   try {
     const token = safeStorage.decryptString(Buffer.from(stored.tokenCiphertext, 'base64'));
-    return token ? { baseUrl: stored.portalUrl, token } : null;
+    return token || null;
   } catch {
+    return null;
+  }
+}
+
+function hostAllowed(portalUrl: string, allowedHosts: readonly string[]) {
+  try {
+    return allowedHosts.includes(new URL(portalUrl).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+export async function deviceStatus(allowedHosts: readonly string[]): Promise<DeviceStatus> {
+  const stored = await readStoredConfig();
+  const tokenReadable = Boolean(stored && decryptStored(stored));
+  const allowed = Boolean(stored && hostAllowed(stored.portalUrl, allowedHosts));
+  let message = '';
+  if (stored && !tokenReadable) {
+    message = 'The saved device token can no longer be read on this computer. Re-enter the device token.';
+  } else if (stored && !allowed) {
+    message = 'The saved portal address is no longer allowed. Re-enter the device setup.';
+  }
+  return {
+    configured: tokenReadable && allowed,
+    portalUrl: stored?.portalUrl || DEFAULT_PORTAL_URL,
+    tokenReadable,
+    encryptionAvailable: encryptionAvailable(),
+    message
+  };
+}
+
+/** Main-process only. Returns null when not configured, unreadable or not allowed. */
+export async function loadDeviceConnection(allowedHosts: readonly string[], log: (message: string) => void) {
+  const stored = await readStoredConfig();
+  if (!stored) {
+    return null;
+  }
+  if (!hostAllowed(stored.portalUrl, allowedHosts)) {
+    log('Saved portal host is not allowed. Run device setup again.');
+    return null;
+  }
+  const token = decryptStored(stored);
+  if (!token) {
     log('Device token could not be decrypted. Run device setup again.');
     return null;
   }
+  return { baseUrl: stored.portalUrl, token };
 }
 
 export async function saveDeviceConfig(portalUrl: string, token: string) {
@@ -94,7 +121,6 @@ export async function saveDeviceConfig(portalUrl: string, token: string) {
     version: 1,
     portalUrl,
     tokenCiphertext: safeStorage.encryptString(token).toString('base64'),
-    tokenHint: tokenHint(token),
     savedAt: new Date().toISOString()
   };
   const target = configPath();

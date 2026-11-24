@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, net } from 'electron';
 import type { IpcMainInvokeEvent, WebContentsPrintOptions } from 'electron';
-import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isAppUrl } from './appUrl.js';
+import { fetchImageDataUrl } from './imageFetch.js';
+import { netFetchManualRedirect } from './netManualFetch.js';
 import {
   captureArchivePngs,
   handleCardDocumentProtocol,
@@ -20,7 +21,13 @@ import {
   saveDeviceConfig
 } from './deviceConfig.js';
 import type { FetchLike } from './portalRequest.js';
-import { checkDeviceToken, normalizePortalUrl, portalRequest, PortalRequestError } from './portalRequest.js';
+import {
+  checkDeviceToken,
+  normalizePortalUrl,
+  PORTAL_HOST_ALLOWLIST,
+  portalRequest,
+  PortalRequestError
+} from './portalRequest.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +39,27 @@ const CR80_PAGE_SIZE = { width: 53980, height: 85600 };
 const netFetch: FetchLike = (input, init) => net.fetch(input, init);
 
 registerCardDocumentScheme();
+
+/**
+ * Allowed portal hosts. GTIS_IDPRINT_DEV_PORTAL_HOSTS (comma-separated) is
+ * read at runtime and only honoured in an unpackaged dev run, so it cannot
+ * widen a release build.
+ */
+function allowedPortalHosts(): readonly string[] {
+  const extra = app.isPackaged ? '' : process.env.GTIS_IDPRINT_DEV_PORTAL_HOSTS || '';
+  const hosts = extra
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  return [...PORTAL_HOST_ALLOWLIST, ...hosts];
+}
+
+function appLocation() {
+  return {
+    devUrl: process.env.VITE_DEV_SERVER_URL || undefined,
+    indexFileUrl: pathToFileURL(path.join(__dirname, '../dist/index.html')).toString()
+  };
+}
 
 function logDiagnostic(message: string, details?: unknown) {
   const detailText = details === undefined ? '' : ` ${JSON.stringify(details)}`;
@@ -104,6 +132,18 @@ function createMainWindow() {
       nodeIntegration: false
     }
   });
+
+  // The main window holds the privileged bridge: never let it leave the app.
+  const blockForeignNavigation = (event: Electron.Event, url: string) => {
+    if (!isAppUrl(url, appLocation())) {
+      event.preventDefault();
+      logDiagnostic('Blocked main window navigation.', { url: url.slice(0, 200) });
+    }
+  };
+  mainWindow.webContents.on('will-navigate', blockForeignNavigation);
+  mainWindow.webContents.on('will-redirect', blockForeignNavigation);
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     logDiagnostic('Renderer load failed.', { errorCode, errorDescription, validatedURL });
@@ -213,8 +253,20 @@ async function captureCardPngs(html: string) {
   return { front: capture.front, back: capture.back, dpi: capture.dpi };
 }
 
+/**
+ * IPC is accepted only from the main window's top frame while it shows the
+ * app's own page. Print and capture windows have no preload, and a page the
+ * window was somehow navigated to would fail the URL check.
+ */
 function assertMainWindowSender(event: IpcMainInvokeEvent) {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
+  const frame = event.senderFrame;
+  if (
+    !mainWindow ||
+    event.sender !== mainWindow.webContents ||
+    !frame ||
+    frame !== mainWindow.webContents.mainFrame ||
+    !isAppUrl(frame.url, appLocation())
+  ) {
     throw new Error('This request is only allowed from the ID print station window.');
   }
 }
@@ -225,7 +277,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 ipcMain.handle('device:status', async (event) => {
   assertMainWindowSender(event);
-  return deviceStatus();
+  return deviceStatus(allowedPortalHosts());
 });
 
 ipcMain.handle('device:configure', async (event, input: unknown) => {
@@ -233,7 +285,7 @@ ipcMain.handle('device:configure', async (event, input: unknown) => {
   const raw = (input && typeof input === 'object' ? input : {}) as { portalUrl?: unknown; token?: unknown };
   let portalUrl: string;
   try {
-    portalUrl = normalizePortalUrl(raw.portalUrl);
+    portalUrl = normalizePortalUrl(raw.portalUrl, allowedPortalHosts());
   } catch (error) {
     throw new Error(error instanceof PortalRequestError ? error.message : 'The portal address is not valid.');
   }
@@ -242,7 +294,7 @@ ipcMain.handle('device:configure', async (event, input: unknown) => {
     throw new Error(`The device token must be at least ${MIN_TOKEN_LENGTH} characters with no spaces.`);
   }
 
-  const current = await deviceStatus();
+  const current = await deviceStatus(allowedPortalHosts());
   if (!current.encryptionAvailable) {
     throw new Error(
       'This computer cannot encrypt the device token (Windows data protection or the system keychain is unavailable). The token was not saved.'
@@ -251,26 +303,26 @@ ipcMain.handle('device:configure', async (event, input: unknown) => {
 
   const { check, status } = await checkDeviceToken({ baseUrl: portalUrl, token }, netFetch);
   logDiagnostic('Device setup token check.', { portalUrl, check, status });
-  if (check === 'rejected') {
-    // Keep whatever was configured before; a wrong token is never saved.
+  if (check !== 'accepted') {
+    // Only a token the portal accepted is ever saved; keep the old setup.
     return { ...current, check };
   }
 
   await saveDeviceConfig(portalUrl, token);
   logDiagnostic('Device setup saved.', { portalUrl, check });
-  return { ...(await deviceStatus()), check };
+  return { ...(await deviceStatus(allowedPortalHosts())), check };
 });
 
 ipcMain.handle('device:clear', async (event) => {
   assertMainWindowSender(event);
   await clearDeviceConfig();
   logDiagnostic('Device setup cleared.');
-  return deviceStatus();
+  return deviceStatus(allowedPortalHosts());
 });
 
 ipcMain.handle('portal:request', async (event, request: unknown) => {
   assertMainWindowSender(event);
-  const connection = await loadDeviceConnection((message) => logDiagnostic(message));
+  const connection = await loadDeviceConnection(allowedPortalHosts(), (message) => logDiagnostic(message));
   if (!connection) {
     return {
       ok: false,
@@ -290,7 +342,8 @@ ipcMain.handle('portal:request', async (event, request: unknown) => {
   }
 });
 
-ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
+ipcMain.handle('asset:readDataUrl', async (event, assetPath: string) => {
+  assertMainWindowSender(event);
   const filePath = resolvePublicAsset(assetPath);
   let buffer: Buffer;
   try {
@@ -306,7 +359,8 @@ ipcMain.handle('asset:readDataUrl', async (_event, assetPath: string) => {
 });
 
 function registerPrinterHandlers() {
-  ipcMain.handle('printers:list', async () => {
+  ipcMain.handle('printers:list', async (event) => {
+    assertMainWindowSender(event);
     if (!mainWindow) {
       return [];
     }
@@ -318,7 +372,8 @@ registerPrinterHandlers();
 
 ipcMain.handle(
   'card:print',
-  async (_event, html: string, options: { deviceName?: string; silent?: boolean }) => {
+  async (event, html: string, options: { deviceName?: string; silent?: boolean }) => {
+    assertMainWindowSender(event);
     const silent = Boolean(options.silent);
     const mode = silent ? 'silent' : 'dialog';
     const printerName = options.deviceName || 'System default';
@@ -399,7 +454,8 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('card:savePdf', async (_event, html: string) => {
+ipcMain.handle('card:savePdf', async (event, html: string) => {
+  assertMainWindowSender(event);
   const { printWindow } = await createPrintWindow(html);
 
   try {
@@ -426,95 +482,21 @@ ipcMain.handle('card:savePdf', async (_event, html: string) => {
   }
 });
 
-ipcMain.handle('card:capturePngs', async (_event, html: string) => captureCardPngs(html));
-
-ipcMain.handle('image:fetchDataUrl', async (_event, url: string) => {
-  let parsed: URL;
-  try {
-    parsed = new URL(String(url));
-  } catch {
-    throw new Error('Image address is not valid.');
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error('Images can only be downloaded over http or https.');
-  }
-  // The portal returns the original uploaded photo (not a thumbnail); it is
-  // embedded byte-for-byte so the 600 DPI archive keeps full detail.
-  const image = await downloadImage(parsed.toString());
-  if (!image.ok) {
-    throw new Error(`Image fetch failed: ${image.status}`);
-  }
-
-  const contentType = image.contentType.split(';')[0] || 'image/jpeg';
-  if (!contentType.startsWith('image/')) {
-    throw new Error('Fetched file is not an image.');
-  }
-
-  return `data:${contentType};base64,${image.buffer.toString('base64')}`;
+ipcMain.handle('card:capturePngs', async (event, html: string) => {
+  assertMainWindowSender(event);
+  return captureCardPngs(html);
 });
 
-interface ImageDownload {
-  ok: boolean;
-  status: number;
-  contentType: string;
-  buffer: Buffer;
-}
-
-function downloadImage(url: string, redirectCount = 0): Promise<ImageDownload> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const request = parsed.protocol === 'http:' ? httpRequest : httpsRequest;
-    const req = request(
-      parsed,
-      {
-        headers: {
-          Accept: 'image/*,*/*;q=0.8',
-          'User-Agent': 'GTIS-ID-Print-Station'
-        }
-      },
-      (response) => {
-        const status = response.statusCode || 0;
-        const location = response.headers.location;
-
-        if (status >= 300 && status < 400 && location && redirectCount < 5) {
-          response.resume();
-          resolve(downloadImage(new URL(location, url).toString(), redirectCount + 1));
-          return;
-        }
-
-        if (status < 200 || status >= 300) {
-          response.resume();
-          resolve({
-            ok: false,
-            status,
-            contentType: String(response.headers['content-type'] || ''),
-            buffer: Buffer.alloc(0)
-          });
-          return;
-        }
-
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-        response.on('end', () => {
-          resolve({
-            ok: true,
-            status,
-            contentType: String(response.headers['content-type'] || 'image/jpeg'),
-            buffer: Buffer.concat(chunks)
-          });
-        });
-      }
-    );
-
-    req.setTimeout(15000, () => {
-      req.destroy(new Error('Image fetch timed out.'));
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
+ipcMain.handle('image:fetchDataUrl', async (event, url: string) => {
+  assertMainWindowSender(event);
+  // Photos come from the configured portal's own host (the portal builds
+  // photo_url from its base URL and returns the original upload, not a
+  // thumbnail). The bytes are embedded as-is so the 600 DPI archive keeps
+  // full detail.
+  const status = await deviceStatus(allowedPortalHosts());
+  const allowedHost = status.configured ? new URL(status.portalUrl).host : null;
+  return fetchImageDataUrl(url, allowedHost, netFetchManualRedirect);
+});
 
 app.whenReady().then(() => {
   handleCardDocumentProtocol();
