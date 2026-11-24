@@ -63,7 +63,7 @@ for (const scale of scales) {
   }
   const ok = result.status === 0 && report.failures.length === 0;
   failed ||= !ok;
-  console.log(`${label}: ${ok ? 'ok' : 'FAILED'} - screen ${report.screen}${report.taller ? ' (card taller than screen)' : ''} - ${sides}${report.backTopLuminance !== undefined ? ` (back top/bottom luminance ${report.backTopLuminance}/${report.backBottomLuminance})` : ''}`);
+  console.log(`${label}: ${ok ? 'ok' : 'FAILED'} - screen ${report.screen}${report.taller ? ' (card taller than screen)' : ''} - ${sides}${report.backTopLuminance !== undefined ? ` (back top/bottom luminance ${report.backTopLuminance}/${report.backBottomLuminance})` : ''}${report.brokenFont ? `, broken font ${report.brokenFont}` : ''}`);
   for (const failure of report.failures) {
     console.log(`  - ${failure}`);
   }

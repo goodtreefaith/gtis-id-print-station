@@ -22,6 +22,9 @@ const label = process.env.ARCHIVE_LABEL || 'default';
 const MIN_BYTES = 300 * 1024;
 
 registerCardDocumentScheme();
+// The harness has no main window; without this Electron quits as soon as
+// the first capture window closes, which aborts the next capture.
+app.on('window-all-closed', () => undefined);
 
 function dataUrl(filePath: string, mime: string) {
   return `data:${mime};base64,${readFileSync(filePath).toString('base64')}`;
@@ -153,6 +156,21 @@ async function run() {
   const capture = await captureArchivePngs(html, (message, details) =>
     console.error(`[harness ${label}] ${message} ${details ? JSON.stringify(details) : ''}`)
   );
+
+  // A supplied-but-broken ID card font must stop the capture (not fall back).
+  const brokenFontHtml = renderArchiveHtml(student, qr, {
+    front: dataUrl(path.join(templates, 'front.clean-2026.svg'), 'image/svg+xml'),
+    back: dataUrl(path.join(templates, 'back.canva.svg'), 'image/svg+xml'),
+    idCardFontFaceCss: '@font-face { font-family: "GTIS Avenir Bold"; src: url("data:font/woff2;base64,Tk9UQUZPTlQ=") format("woff2"); font-style: normal; font-weight: 700; }'
+  });
+  const brokenFont = await captureArchivePngs(brokenFontHtml).then(
+    () => 'captured',
+    (error: unknown) => (error instanceof Error ? error.message : String(error))
+  );
+  report.brokenFont = /font did not load/.test(brokenFont) ? 'refused' : brokenFont;
+  if (report.brokenFont !== 'refused') {
+    failures.push(`A broken ID card font did not stop the capture (${brokenFont}).`);
+  }
 
   mkdirSync(outDir, { recursive: true });
   const sides: Record<string, { width: number; height: number; bytes: number; bitmap: Buffer }> = {};

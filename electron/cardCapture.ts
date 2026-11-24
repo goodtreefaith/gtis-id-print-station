@@ -8,6 +8,8 @@ const pendingCardDocuments = new Map<string, string>();
 let cardDocumentCounter = 0;
 
 export const ARCHIVE_DPI = 600;
+/** Must match ID_CARD_FONT_FACE in src/lib/fonts.ts. */
+export const ID_CARD_FONT_FACE = 'GTIS Avenir Bold';
 // ISO CR80 portrait card: 53.98 mm x 85.60 mm.
 export const ARCHIVE_SIZE = {
   width: Math.round((53.98 / 25.4) * ARCHIVE_DPI),
@@ -134,6 +136,33 @@ export async function captureArchivePngs(
     if (assets.failedImages.length > 0) {
       log('Archive capture: some card images failed to load.', { failed: assets.failedImages.length });
       throw new Error('An ID card image did not load, so the archive copy was not captured. Nothing was uploaded.');
+    }
+
+    // The ID card font (src/lib/fonts.ts, ID_CARD_FONT_FACE) is optional: the
+    // repo ships no font file, and then the archive uses the fallback stack
+    // like the printed card. If the font WAS supplied and fails to load, the
+    // archive would not match the printed card, so stop.
+    const fontState = await window.webContents.executeJavaScript(`
+      (async () => {
+        const family = ${JSON.stringify(ID_CARD_FONT_FACE)};
+        const faces = Array.from(document.fonts || []).filter((face) => face.family.replace(/["']/g, '') === family);
+        if (faces.length === 0) {
+          return 'absent';
+        }
+        try {
+          await document.fonts.load('700 12px "' + family + '"');
+        } catch (error) {
+          // status checked below
+        }
+        return faces.every((face) => face.status === 'loaded') ? 'loaded' : 'failed';
+      })()
+    `);
+    if (fontState === 'failed') {
+      log('Archive capture: ID card font failed to load.');
+      throw new Error('The ID card font did not load, so the archive copy was not captured. Nothing was uploaded.');
+    }
+    if (fontState === 'absent') {
+      log('Archive capture: optional ID card font not installed; using the fallback font like the printed card.');
     }
 
     const sides = await window.webContents.executeJavaScript(`
