@@ -267,6 +267,7 @@ export default function App() {
   /** Which student the edit fields belong to. Edits only count, save or print for that student. */
   const [draftOwner, setDraftOwner] = useState<string | null>(null);
   const liveMode = hasPortalConfig(portalSettings);
+  const previewOnly = window.gtPrint?.previewOnly === true;
   const [flow, setFlow] = useState<FlowState>(() => idleFlow(false));
   const operatorReady = portalChecked && (!liveMode || hasValidOperatorSession(operatorSession));
   const operatorCanUseStation = !liveMode || operatorSession?.permissions?.canView !== false;
@@ -569,7 +570,7 @@ export default function App() {
   const fitWarnings = (Object.keys(fit) as Array<keyof FitReport>).filter((key) => fit[key]);
   /** The list on screen belongs to what is typed (no debounce or request still pending). */
   const searchSettled = loadedQuery === query && !loadingStudents;
-  const canPrint = Boolean(selected && draftsReady && blockers.length === 0 && searchSettled && !pendingSwitch);
+  const canPrint = Boolean(!previewOnly && selected && draftsReady && blockers.length === 0 && searchSettled && !pendingSwitch);
 
   function applyUpdatedStudent(updated: StudentRecord) {
     setStudents((current) => replaceStudent(current, updated));
@@ -763,7 +764,7 @@ export default function App() {
    * clicks from sending two jobs. A student already printed this session asks first.
    */
   async function runPrintJob(job: PrintJob) {
-    if (printingRef.current) return;
+    if (previewOnly || printingRef.current) return;
     if (liveMode && !hasValidOperatorSession(operatorSession)) {
       setFlow({ tone: 'error', title: 'Sign in before printing.' });
       return;
@@ -1003,6 +1004,7 @@ export default function App() {
   }
 
   async function handleSavePdf() {
+    if (previewOnly) return;
     if (liveMode && !hasValidOperatorSession(operatorSession)) {
       setFlow({ tone: 'error', title: 'Sign in before saving.' });
       return;
@@ -1121,9 +1123,13 @@ export default function App() {
   const modalOpen = captureOpen || Boolean(pendingSwitch) || Boolean(confirm);
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (modalOpen) return;
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
+      if (previewOnly && mod && key === 'p') {
+        event.preventDefault();
+        return;
+      }
+      if (modalOpen) return;
       if (mod && key === 'p') {
         event.preventDefault();
         if (!event.repeat) keyActions.current.print();
@@ -1138,7 +1144,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [modalOpen]);
+  }, [modalOpen, previewOnly]);
 
   // Printer popover: focus trap, Esc and click outside close it, focus returns to its button.
   useFocusTrap(printerPopoverRef, printerOpen, () => setPrinterOpen(false));
@@ -1238,9 +1244,9 @@ export default function App() {
     );
   }
 
-  const printerLabel = selectedPrinter
-    ? printers.find((printer) => printer.name === selectedPrinter)?.displayName || selectedPrinter
-    : 'Windows print dialog';
+  let printerLabel = 'Windows print dialog';
+  if (previewOnly) printerLabel = 'Printer unavailable';
+  else if (selectedPrinter) printerLabel = printers.find((printer) => printer.name === selectedPrinter)?.displayName || selectedPrinter;
   const readOnly = !operatorCanEditPortal;
   const bindRef = (key: FieldKey) => (el: HTMLInputElement | HTMLTextAreaElement | null) => {
     fieldRefs.current[key] = el;
@@ -1250,7 +1256,9 @@ export default function App() {
   // edits, blockers, no student, then the last result for this student.
   // While a print or upload failure shows, Try again is the main action and Print ID is outlined.
   const printErrorShowing = Boolean(flow.retry) && flow.tone !== 'working';
-  let stripFlow: FlowState = flow;
+  let stripFlow: FlowState = previewOnly && flow.tone === 'neutral'
+    ? { tone: 'neutral', title: 'Ready to preview.' }
+    : flow;
   let stripMode: 'flow' | 'dirty' | 'blocked' = 'flow';
   if (flow.tone === 'working' || flow.retry) {
     stripFlow = flow;
@@ -1260,21 +1268,21 @@ export default function App() {
       selected && blockers.length
         ? {
             tone: 'warning',
-            title: 'Unsaved changes. Not ready to print yet.',
+            title: previewOnly ? 'Unsaved changes.' : 'Unsaved changes. Not ready to print yet.',
             detail: `${blockers.map((blocker) => blocker.label).join(' · ')}.`
           }
-        : { tone: 'warning', title: 'Unsaved changes.', detail: 'Print ID saves them first.' };
+        : { tone: 'warning', title: 'Unsaved changes.', detail: previewOnly ? undefined : 'Print ID saves them first.' };
   } else if (pendingAction === 'print') {
     stripFlow = { tone: 'working', title: `Finding “${query.trim()}”…`, detail: 'Prints as soon as the search finds one clear match.' };
   } else if (selected && blockers.length) {
     stripMode = 'blocked';
     stripFlow = {
       tone: 'warning',
-      title: 'Not ready to print yet.',
+      title: previewOnly ? 'Card details need attention.' : 'Not ready to print yet.',
       detail: `${blockers.map((blocker) => blocker.label).join(' · ')}. Fix these in the card details.`
     };
   } else if (!selected) {
-    stripFlow = { tone: 'neutral', title: 'Nothing to print yet.' };
+    stripFlow = { tone: 'neutral', title: previewOnly ? 'Choose a sample student.' : 'Nothing to print yet.' };
   }
 
   const checks: Array<{ key: string; label: string; ok: boolean; warn?: boolean; fix?: () => void; fixLabel?: string }> = selected
@@ -1373,6 +1381,7 @@ export default function App() {
           selectedId={selected?.id || null}
           onSelect={selectStudent}
           onConfirm={() => {
+            if (previewOnly) return;
             if (searchSettled) printButtonRef.current?.focus();
             else setPendingAction('focus-print');
           }}
@@ -1383,6 +1392,7 @@ export default function App() {
           onRefresh={handleRefreshStudents}
           printedAt={printedAt}
           searchPending={!searchSettled}
+          previewOnly={previewOnly}
         />
 
         <section className="zone editor-zone" aria-label="Card details">
@@ -1522,7 +1532,7 @@ export default function App() {
                 </section>
 
                 <section className="editor-section readiness" aria-labelledby="sec-ready">
-                  <h2 id="sec-ready">Ready to print?</h2>
+                  <h2 id="sec-ready">{previewOnly ? 'Card checks' : 'Ready to print?'}</h2>
                   <ul className="readiness-list">
                     {checks.map((check) => (
                       <li key={check.key} className={check.ok ? (check.warn ? 'is-warn' : 'is-ok') : 'is-blocked'}>
@@ -1608,6 +1618,7 @@ export default function App() {
           )}
 
           <div className="print-panel">
+            {previewOnly ? <p className="readonly-note">Printing and PDF export are unavailable in the Rust sample.</p> : null}
             <div className="print-actions">
               <div className="printer-picker">
                 <button
@@ -1619,6 +1630,7 @@ export default function App() {
                   aria-label={`Printer settings. Printer: ${printerLabel}${silentPrint ? ', without dialog' : ''}`}
                   title={`Printer: ${printerLabel}`}
                   onClick={() => setPrinterOpen((open) => !open)}
+                  disabled={previewOnly}
                 >
                   <Printer size={18} aria-hidden="true" />
                   <span className="printer-name">{printerLabel}</span>
@@ -1661,7 +1673,7 @@ export default function App() {
                 type="button"
                 className="button secondary"
                 onClick={() => void handleSavePdf()}
-                disabled={!selected || busy || !qrDataUrl}
+                disabled={previewOnly || !selected || busy || !qrDataUrl}
                 aria-label="Save PDF"
                 title="Save the card as a PDF"
               >
@@ -1673,11 +1685,11 @@ export default function App() {
                 className={`button xl ${printErrorShowing ? 'secondary' : 'primary'}`}
                 onClick={() => void runPrintJob({})}
                 disabled={!canPrint || busy}
-                aria-keyshortcuts="Control+P"
+                aria-keyshortcuts={previewOnly ? undefined : 'Control+P'}
                 aria-describedby={stripMode !== 'flow' ? 'print-status' : undefined}
               >
                 <Printer size={22} aria-hidden="true" /> Print ID
-                <kbd className="on-primary">Ctrl+P</kbd>
+                {previewOnly ? null : <kbd className="on-primary">Ctrl+P</kbd>}
               </button>
             </div>
 

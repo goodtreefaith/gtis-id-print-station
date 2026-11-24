@@ -264,6 +264,18 @@ workflow in GitHub Actions. To publish a release:
    `gtis-id-print-station-windows` artifact.
 3. Create a GitHub release `v<version>` and attach both EXEs.
 
+### Rust desktop previews
+
+The [Rust station workspace](rust-station/README.md) holds two offline builds.
+The calibration app renders and exports exact-size CR80 cards. The GTIS
+sample app opens the current station screens with sample students in a Rust
+desktop executable.
+
+Both previews use sample data. Staff should keep using the current Windows
+release for live printing. The Rust sample still needs direct printing and
+archive filing before it can replace that release. Laravel connectivity
+comes after the offline workflow.
+
 ### Portal connection and security
 
 This repository and its releases are **public**, so nothing secret may be

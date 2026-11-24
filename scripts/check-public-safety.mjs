@@ -7,7 +7,7 @@
 //  (a) no tracked .env* file except .env.example
 //  (b) no tracked env-style assignment of a non-empty value to a name
 //      containing TOKEN, SECRET, PASSWORD or KEY
-//  (c) build output (dist/, dist-electron/, release/ app bundles) contains
+//  (c) build output (Electron and Rust frontends, release/ app bundles) contains
 //      neither VITE_GTIS_IDPRINT_API_TOKEN nor the value of any secret-like
 //      variable in local .env, .env.local, .env.production or .env.*.local
 //      files (compared in memory only)
@@ -110,6 +110,8 @@ function walk(dir, out = []) {
 const outputs = [
   ...walk(path.join(repoRoot, 'dist')),
   ...walk(path.join(repoRoot, 'dist-electron')),
+  ...walk(path.join(repoRoot, 'rust-station', 'dist')),
+  ...walk(path.join(repoRoot, 'rust-station', 'ci3-preview', 'dist')),
   // Packaged apps: app.asar is an uncompressed archive, so a plain byte
   // search finds baked-in strings. Installers (.exe/.dmg) are compressed and
   // are covered by scanning their app.asar before packaging.

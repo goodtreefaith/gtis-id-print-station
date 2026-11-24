@@ -1,0 +1,16 @@
+[package]
+name = "good-tree-id-print-station"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+base64 = "0.22"
+id-card-calibration = { path = "../calibration" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2.12", features = [] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,6 @@
+{
+  "identifier": "preview",
+  "description": "Render a synthetic calibration card in the main window.",
+  "windows": ["main"],
+  "permissions": ["allow-preview-calibration"]
+}
