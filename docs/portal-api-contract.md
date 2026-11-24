@@ -41,7 +41,9 @@ authenticates.
 
 Device setup checks a token by calling `POST /idprintapi/login` with an empty
 email and password: `422` ("Email and password are required.") means the
-device token was accepted, `401` means it was rejected.
+device token was accepted, `401` means it was rejected. The token is saved only
+on `422`. Allowed portal hosts: `portal.gtis.edu.ph` and
+`preportal.gtis.edu.ph`.
 
 ## Operator Login
 

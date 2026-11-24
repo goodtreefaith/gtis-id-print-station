@@ -104,23 +104,33 @@ sample students and nothing sent to the portal.
 1. On the portal server, configure the device token (`GTIS_IDPRINT_API_TOKEN`
    or `application/config/idprint.local.php`, see the API contract).
 2. On the station, open the app, click `Device setup` in the Sample mode banner.
-3. Keep the portal address (`https://portal.gtis.edu.ph`) or change it, paste
-   the device token (at least 32 characters) and click `Save device setup`.
-4. The app checks the token with the portal before saving:
-   - accepted: saved; the app switches to live mode and asks for a portal sign-in;
-   - rejected: nothing is saved;
-   - unreachable: saved, but not confirmed (for example the station is offline).
+3. Keep the portal address (`https://portal.gtis.edu.ph`, or
+   `https://preportal.gtis.edu.ph` for testing; no other host is allowed),
+   paste the device token (at least 32 characters) and click
+   `Save device setup`.
+4. The app checks the token with the portal and saves it **only if the portal
+   accepts it**. Then it switches to live mode and asks for a portal sign-in.
+   If the portal rejects the token or cannot be reached, nothing is saved.
 
 The token is encrypted with Electron `safeStorage` (Windows DPAPI for the
 signed-in Windows user, or the macOS Keychain) in `device-config.json` under
 the app's user-data folder. If the computer cannot encrypt it, the app refuses
 to save it; there is no plain-text fallback. Afterwards the app shows only the
-portal host and the token's last 4 characters. `Reset device setup` on the
-sign-in screen removes the saved token and returns to Sample mode.
+portal host; nothing derived from the token is ever shown. If the saved token
+can no longer be decrypted (for example after a Windows account change), the
+app returns to Sample mode and asks for the token to be entered again.
+`Reset device setup` on the sign-in screen removes the saved token.
 
 All portal calls run in the Electron main process, which adds the device token
 headers and only allows `/idprintapi/` routes on the configured portal. Older
 versions kept a token in browser storage; the app deletes that on startup.
+
+The main window can only show the app itself: navigation elsewhere and new
+windows are blocked, the bridge answers only the app page, and the packaged
+page has a strict Content Security Policy. Student photos are downloaded only
+from the configured portal host over https (JPEG, PNG, WebP or GIF, at most
+15 MB). For local development against a fake portal, an unpackaged run may add
+hosts with `GTIS_IDPRINT_DEV_PORTAL_HOSTS`; release builds ignore it.
 
 ## Portal Adapter
 

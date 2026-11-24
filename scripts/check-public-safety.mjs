@@ -9,9 +9,10 @@
 //      containing TOKEN, SECRET, PASSWORD or KEY
 //  (c) build output (dist/, dist-electron/, release/ app bundles) contains
 //      neither VITE_GTIS_IDPRINT_API_TOKEN nor the value of any secret-like
-//      variable in a local .env.local (compared in memory only)
-//  (d) git history (all refs) has no high-entropy 40+ character value
-//      assigned to a token-like name
+//      variable in local .env, .env.local, .env.production or .env.*.local
+//      files (compared in memory only)
+//  (d) git history (all refs, merges included) has no high-entropy 32+
+//      character value assigned to a token-like name
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -119,18 +120,20 @@ if (!existsSync(path.join(repoRoot, 'dist')) || !existsSync(path.join(repoRoot, 
   cProblems.push('dist/ or dist-electron/ is missing. Run `npm run build` first.');
 }
 const needles = [{ label: 'the name VITE_GTIS_IDPRINT_API_TOKEN', bytes: Buffer.from('VITE_GTIS_IDPRINT_API_TOKEN') }];
-const envLocal = path.join(repoRoot, '.env.local');
-let envLocalValues = 0;
-if (existsSync(envLocal)) {
-  for (const line of readFileSync(envLocal, 'utf8').split(/\r?\n/)) {
+const envFiles = readdirSync(repoRoot).filter(
+  (name) => name === '.env' || name === '.env.local' || name === '.env.production' || /^\.env\..+\.local$/.test(name)
+);
+let envSecretValues = 0;
+for (const name of envFiles) {
+  for (const line of readFileSync(path.join(repoRoot, name), 'utf8').split(/\r?\n/)) {
     const match = line.match(ENV_LINE);
     if (!match || !SECRET_NAME.test(match[1])) {
       continue;
     }
     const value = stripValue(match[2]);
     if (value.length >= 8) {
-      envLocalValues += 1;
-      needles.push({ label: `the value of ${match[1]} from .env.local`, bytes: Buffer.from(value) });
+      envSecretValues += 1;
+      needles.push({ label: `the value of ${match[1]} from ${name}`, bytes: Buffer.from(value) });
     }
   }
 }
@@ -141,14 +144,16 @@ for (const needle of needles) {
     cProblems.push(`${path.relative(repoRoot, file)} contains ${needle.label}`);
   }
 }
-console.log(`      scanned ${outputs.length} build files; .env.local ${existsSync(envLocal) ? `present (${envLocalValues} secret-like value(s) compared, not printed)` : 'not present'}`);
+console.log(
+  `      scanned ${outputs.length} build files; local env files: ${envFiles.length ? `${envFiles.join(', ')} (${envSecretValues} secret-like value(s) compared, not printed)` : 'none'}`
+);
 result('(c) build output contains no device token', cProblems);
 
 // (d) git history
 const shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true';
 const HISTORY_ASSIGN =
-  /(token|secret|password|passwd|api[_-]?key|private[_-]?key|auth|bearer)[A-Za-z0-9_\-]*["'\])]{0,3}\s*(?:[:=]|=>)\s*["'`]?(?:Bearer\s+)?([A-Za-z0-9+/=_\-]{40,})/gi;
-const BEARER = /Bearer\s+([A-Za-z0-9+/=_\-]{40,})/g;
+  /(token|secret|password|passwd|api[_-]?key|private[_-]?key|auth|bearer)[A-Za-z0-9_\-]*["'\])]{0,3}\s*(?:[:=]|=>)\s*["'`]?(?:Bearer\s+)?([A-Za-z0-9+/=_\-]{32,})/gi;
+const BEARER = /Bearer\s+([A-Za-z0-9+/=_\-]{32,})/g;
 function entropy(value) {
   const counts = new Map();
   for (const char of value) {
@@ -163,16 +168,18 @@ function entropy(value) {
 }
 function looksSecret(value) {
   if (/^[0-9a-f]+$/i.test(value)) {
-    return value.length >= 40 && entropy(value) >= 3.0; // random hex
+    return value.length >= 32 && entropy(value) >= 3.0; // random hex
   }
   // mixed alphabet: random base64/base64url tokens sit well above 4 bits/char
   return entropy(value) >= 4.0 && /[0-9]/.test(value) && /[a-z]/i.test(value);
 }
 const dProblems = [];
-const log = git(['log', '-p', '--all', '--no-color', '--no-ext-diff', '--unified=0', '--format=COMMIT %H']);
+// --cc also shows lines a merge introduced (combined diff format).
+const log = git(['log', '-p', '--all', '--cc', '--no-color', '--no-ext-diff', '--unified=0', '--format=COMMIT %H']);
 let commit = '';
 let file = '';
 let newLine = 0;
+let prefixWidth = 1; // 1 for normal diffs, number of parents for combined diffs
 for (const line of log.split('\n')) {
   if (line.startsWith('COMMIT ')) {
     commit = line.slice(7, 19);
@@ -182,18 +189,22 @@ for (const line of log.split('\n')) {
     file = line.startsWith('+++ b/') ? line.slice(6) : line.slice(4);
     continue;
   }
-  const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+  const hunk = line.match(/^(@@+) (?:-\d+(?:,\d+)? )+\+(\d+)(?:,\d+)? @@+/);
   if (hunk) {
-    newLine = Number(hunk[1]);
+    prefixWidth = hunk[1].length - 1;
+    newLine = Number(hunk[2]);
     continue;
   }
-  if (line.startsWith('+') && !line.startsWith('+++')) {
+  const prefix = line.slice(0, prefixWidth);
+  if (prefix.length === prefixWidth && prefix.includes('+') && !prefix.includes('-') && /^[ +]+$/.test(prefix)) {
     if (file !== 'package-lock.json') {
       const candidates = [...line.matchAll(HISTORY_ASSIGN)].map((m) => m[2]).concat([...line.matchAll(BEARER)].map((m) => m[1]));
       if (candidates.some(looksSecret)) {
         dProblems.push(`${file}:${newLine} in commit ${commit}`);
       }
     }
+    newLine += 1;
+  } else if (prefix.length === prefixWidth && /^ +$/.test(prefix)) {
     newLine += 1;
   }
 }
