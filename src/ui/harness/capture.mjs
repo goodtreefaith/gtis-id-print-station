@@ -28,9 +28,11 @@ const SIZES = [
 ];
 
 const args = process.argv.slice(2);
-const roundName = args.find((arg) => !arg.startsWith('--')) || 'round-x';
+const roundName = args.find((arg) => !arg.startsWith('--')) || 'check';
 const baseline = args.includes('--baseline');
-const outDir = path.join(repoRoot, 'docs/plans/ui/captures', roundName);
+const outArg = args.find((arg) => arg.startsWith('--out='));
+// --out=<folder> writes captures outside the repo (for check runs).
+const outDir = outArg ? path.resolve(outArg.slice('--out='.length)) : path.join(repoRoot, 'docs/plans/ui/captures', roundName);
 
 function loadPlaywright() {
   const require = createRequire(import.meta.url);
@@ -543,13 +545,18 @@ async function benchmarkChecks(browser, size) {
   // (d) reprint last with another student selected sends the previous student's card.
   await page.keyboard.type('villanueva');
   await page.waitForTimeout(700);
-  await printAndWait(page, () => page.getByRole('button', { name: /Reprint last/ }).click());
+  await page.getByRole('button', { name: /Reprint last/ }).click();
+  await page.getByTestId('confirm-reprint').waitFor();
+  if (!(await page.evaluate(() => document.activeElement?.textContent?.includes('Don’t print')))) fail('Reprint last confirm does not focus "Don’t print"');
+  await printAndWait(page, () => page.getByRole('button', { name: 'Print another card' }).click());
   if (!(await stub()).titles.at(-1)?.includes('2026001')) fail('(d) Reprint last did not send 2026001');
-  checksPassed.push('(d) Reprint last sends the previous student while another is selected');
+  checksPassed.push('(d) Reprint last asks first (safe button focused), then sends the previous student while another is selected');
 
   // Try again after a failed reprint asks about a jam, then repeats that reprint.
   await page.evaluate(() => (window.__stub.printFail = true));
   await page.getByRole('button', { name: /Reprint last/ }).click();
+  await page.getByTestId('confirm-reprint').waitFor();
+  await page.getByRole('button', { name: 'Print another card' }).click();
   await strip(page).filter({ hasText: /didn.t print/i }).waitFor();
   await page.evaluate(() => (window.__stub.printFail = false));
   await strip(page).getByRole('button', { name: 'Try again' }).click();
@@ -727,6 +734,69 @@ async function bugChecks(browser, size) {
   }
 }
 
+// Pre-PR review: printed-today storage and waiting Ctrl+P with an unclear search.
+async function prChecks(browser, size) {
+  const fail = (message) => {
+    throw new Error(`PR check failed: ${message}`);
+  };
+  const { context, page } = await newPage(browser, size);
+  // A key from an earlier day, as an old build would have left it (with a name in it).
+  await context.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      localStorage.setItem('gtis-id-print-station.printed-2020-01-01', JSON.stringify({ at: { x: 1 }, names: { x: 'Old Name' } }));
+      sessionStorage.setItem('seeded', '1');
+    }
+  });
+  await page.goto(`${ORIGIN}/`);
+  await settle(page);
+  await assertSample(page);
+  const calls = () => page.evaluate(() => window.__stub.printCalls);
+  const printedKeys = () =>
+    page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('gtis-id-print-station.printed-')).map((key) => [key, localStorage.getItem(key)]));
+  if ((await printedKeys()).some(([key]) => key.endsWith('2020-01-01'))) fail('an older day’s printed key was not deleted on startup');
+
+  // P2-1: only id → time is stored.
+  await page.keyboard.type('bamba');
+  await printAndWait(page, () => page.keyboard.press('Control+p'));
+  const stored = await printedKeys();
+  if (stored.length !== 1) fail(`expected one printed key, found ${stored.length}`);
+  const value = JSON.parse(stored[0][1] || '{}');
+  if (!Object.values(value).every((v) => typeof v === 'number') || /Bamba|Jetto|names/.test(stored[0][1] || '')) {
+    fail(`printed-today storage holds more than ids and times: ${stored[0][1]}`);
+  }
+  checksPassed.push('Printed-today storage holds only student id → time; older day keys are deleted on startup');
+
+  // P2-2a: a waiting Ctrl+P with several matches does not print; it says so and focuses Print ID.
+  let before = await calls();
+  await page.keyboard.type('maria');
+  await page.keyboard.press('Control+p');
+  await strip(page).filter({ hasText: 'Several matches' }).waitFor();
+  await page.waitForTimeout(2200);
+  if ((await calls()) !== before) fail('Ctrl+P during a search with several matches printed');
+  if (!(await page.evaluate(() => document.activeElement?.textContent?.includes('Print ID')))) fail('Print ID not focused after several matches');
+
+  // P2-2b: an exact student number prints straight away.
+  await searchBox(page).fill('');
+  await page.waitForTimeout(700);
+  await searchBox(page).focus();
+  await page.keyboard.type('2026003');
+  await printAndWait(page, () => page.keyboard.press('Control+p'));
+  if (!(await page.evaluate(() => window.__stub.jobs.at(-1).title)).includes('2026003')) fail('exact student number did not print that student');
+
+  // P2-2c: picking a student while a Ctrl+P waits cancels it.
+  before = await calls();
+  await searchBox(page).fill('');
+  await page.waitForTimeout(700);
+  await searchBox(page).focus();
+  await page.keyboard.type('bamba');
+  await page.keyboard.press('Control+p');
+  await page.getByRole('option', { name: /Arielle/ }).click();
+  await page.waitForTimeout(2500);
+  if ((await calls()) !== before) fail('a waiting Ctrl+P printed after the operator picked another student');
+  checksPassed.push('Waiting Ctrl+P: several matches → no print, "Several matches" + Print ID focused; exact number prints; picking a student cancels it');
+  await context.close();
+}
+
 async function finalRun(browser, size) {
   const one = async (name, note, options, steps) => {
     const { context, page } = await newPage(browser, size, options);
@@ -785,6 +855,7 @@ async function redesignRun(browser, size) {
     await benchmarkChecks(browser, size);
     await raceChecks(browser, size);
     await bugChecks(browser, size);
+    await prChecks(browser, size);
   }
 }
 
@@ -806,6 +877,12 @@ async function main() {
       await benchmarkChecks(browser, SIZES[0]);
       await raceChecks(browser, SIZES[0]);
       await bugChecks(browser, SIZES[0]);
+      await prChecks(browser, SIZES[0]);
+    } else if (args.includes('--checks')) {
+      await benchmarkChecks(browser, SIZES[0]);
+      await raceChecks(browser, SIZES[0]);
+      await bugChecks(browser, SIZES[0]);
+      await prChecks(browser, SIZES[0]);
     } else {
       for (const size of SIZES) {
         if (baseline) await baselineRun(browser, size);

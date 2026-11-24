@@ -17,7 +17,6 @@ export interface StudentListProps {
   hasMore: boolean;
   onLoadMore: () => void;
   onRefresh: () => void;
-  disabled?: boolean;
   /** Students printed today: id → time printed. */
   printedAt?: Record<string, number>;
   /** Typed text not searched yet: Enter and Ctrl+P wait for it. */
@@ -41,7 +40,7 @@ function missingFor(student: StudentRecord) {
 }
 
 export const StudentList = forwardRef<HTMLInputElement, StudentListProps>(function StudentList(
-  { query, onQueryChange, students: allStudents, selectedId, onSelect, onConfirm, loading, error, hasMore, onLoadMore, onRefresh, disabled, printedAt = {}, searchPending },
+  { query, onQueryChange, students: allStudents, selectedId, onSelect, onConfirm, loading, error, hasMore, onLoadMore, onRefresh, printedAt = {}, searchPending },
   searchRef
 ) {
   const [hidePrinted, setHidePrintedState] = useState(() => {
@@ -113,7 +112,6 @@ export const StudentList = forwardRef<HTMLInputElement, StudentListProps>(functi
           aria-activedescendant={activeIndex >= 0 ? `student-option-${students[activeIndex].id}` : undefined}
           aria-autocomplete="list"
           value={query}
-          disabled={disabled}
           autoComplete="off"
           spellCheck={false}
           onChange={(event) => onQueryChange(event.target.value)}
@@ -144,7 +142,7 @@ export const StudentList = forwardRef<HTMLInputElement, StudentListProps>(functi
             </span>
           </label>
         ) : null}
-        <button type="button" className="text-button target-44 refresh-button" onClick={onRefresh} disabled={loading || disabled} aria-label="Refresh students" title="Refresh students">
+        <button type="button" className="text-button target-44 refresh-button" onClick={onRefresh} disabled={loading} aria-label="Refresh students" title="Refresh students">
           <RefreshCw size={16} aria-hidden="true" /> <span className="refresh-label">Refresh</span>
         </button>
       </div>

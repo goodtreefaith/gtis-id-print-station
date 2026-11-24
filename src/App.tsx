@@ -95,6 +95,13 @@ interface LastPrint extends CardDocuments {
   at: number;
 }
 
+interface PendingUpload {
+  studentId: string;
+  name: string;
+  printSummary: string;
+  archiveHtml: string;
+}
+
 interface PrintJob {
   reprint?: LastPrint;
   /** The operator already confirmed a possible duplicate card. */
@@ -180,21 +187,29 @@ function todayKey() {
   return `${PRINTED_KEY_PREFIX}${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-interface PrintedToday {
-  at: Record<string, number>;
-  names: Record<string, string>;
-}
+/** Student id → time printed today. No names are stored: they come from the list in memory. */
+type PrintedToday = Record<string, number>;
 
-/** Students printed today on this station (per-device convenience; lost if storage is cleared). */
+/** Today's printed marks for this station. Older days' keys are deleted on startup. */
 function readPrintedToday(): PrintedToday {
   try {
-    const raw = window.localStorage.getItem(todayKey());
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && typeof parsed === 'object' && parsed.at && parsed.names) return parsed as PrintedToday;
+    const today = todayKey();
+    for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith(PRINTED_KEY_PREFIX) && key !== today) window.localStorage.removeItem(key);
+    }
+    const parsed = JSON.parse(window.localStorage.getItem(today) || '{}');
+    const marks: PrintedToday = {};
+    if (parsed && typeof parsed === 'object') {
+      for (const [id, at] of Object.entries(parsed)) {
+        if (typeof at === 'number') marks[id] = at;
+      }
+    }
+    return marks;
   } catch {
     // Unreadable or blocked storage: start empty.
+    return {};
   }
-  return { at: {}, names: {} };
 }
 
 function writePrintedToday(value: PrintedToday) {
@@ -272,8 +287,11 @@ export default function App() {
   const [pendingSwitch, setPendingSwitch] = useState<StudentRecord | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: ReactNode; actions: ConfirmAction[]; testId: string } | null>(null);
   const [lastPrint, setLastPrint] = useState<LastPrint | null>(null);
-  const [printedToday, setPrintedToday] = useState<PrintedToday>(() => readPrintedToday());
-  const printedAt = printedToday.at;
+  const [printedAt, setPrintedAt] = useState<PrintedToday>(() => readPrintedToday());
+  /** Names of students printed this session (memory only, never stored). */
+  const [printedNames, setPrintedNames] = useState<Record<string, string>>({});
+  /** Printed cards whose archive copy did not upload yet. Kept until filed or dismissed. */
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [previewPref, setPreviewPref] = useState<{ side: CardSide; n: number }>({ side: 'front', n: 0 });
   const setPreviewSide = (side: CardSide) => setPreviewPref((current) => ({ side, n: current.n + 1 }));
   /** Query the visible results belong to; Print waits until it matches what is typed. */
@@ -300,13 +318,15 @@ export default function App() {
   const selectedRef = useRef<StudentRecord | null>(null);
   const lastLoadedQueryRef = useRef<string | null>(null);
   const lastPrintedShortRef = useRef('');
+  const queryRef = useRef('');
   /** After a successful print the search is cleared; keep the printed student on screen. */
   const keepSelectionRef = useRef(false);
-  const lastJobRef = useRef<{ archiveHtml: string; studentId: string; printSummary: string } | null>(null);
+
   /** The job "Try again" repeats, and whether a card may already have come out. */
-  const retryJobRef = useRef<{ reprint?: LastPrint; studentId?: string; mayHavePrinted?: boolean }>({});
+  const retryJobRef = useRef<{ reprint?: LastPrint; mayHavePrinted?: boolean }>({});
   studentsRef.current = students;
   selectedRef.current = selected;
+  queryRef.current = query;
 
   useEffect(() => {
     void loadOptionalIdCardFont();
@@ -340,7 +360,7 @@ export default function App() {
     setStudents([]);
     setSelected(null);
     setLastPrint(null);
-    lastJobRef.current = null;
+    setPendingUploads([]);
     setLoadedQuery(null);
     lastLoadedQueryRef.current = null;
     setRefreshCount((value) => value + 1);
@@ -412,7 +432,9 @@ export default function App() {
           if (next[0] && next[0].id !== current.id) setPendingSwitch(next[0]);
           target = current;
         } else {
-          target = next[0] || null;
+          // An exact student number beats the first match.
+          const exact = next.find((student) => student.admissionNo && student.admissionNo === searched.trim());
+          target = exact || next[0] || null;
         }
       } else {
         const same = current ? next.find((student) => student.id === current.id) : undefined;
@@ -820,13 +842,14 @@ export default function App() {
     printingRef.current = true;
     setBusy(true);
     const jobStudentId = job.reprint ? job.reprint.studentId : selected?.id;
-    retryJobRef.current = job.reprint ? { reprint: job.reprint } : { studentId: selected?.id };
+    retryJobRef.current = job.reprint ? { reprint: job.reprint } : {};
     const steps: FlowSteps = {
       save: !job.reprint && dirty.any ? 'active' : 'skipped',
       print: 'waiting',
       upload: liveMode && !(job.reprint && job.reprint.uploaded) ? 'waiting' : 'skipped'
     };
     const who = job.reprint ? job.reprint.name : selected ? shortName(previewStudent || selected) : '';
+    const queryAtStart = query;
     if (!job.reprint && selected) lastPrintedShortRef.current = initialName(previewStudent || selected);
     const update = (patch: Partial<FlowSteps>, state: Omit<FlowState, 'steps' | 'studentId'>) => {
       Object.assign(steps, patch);
@@ -917,20 +940,22 @@ export default function App() {
         at: printedTime
       };
       setLastPrint(record);
-      setPrintedToday((current) => {
-        const next = { at: { ...current.at, [studentId]: printedTime }, names: { ...current.names, [studentId]: who } };
+      setPrintedAt((current) => {
+        const next = { ...current, [studentId]: printedTime };
         writePrintedToday(next);
         return next;
       });
-      lastJobRef.current = { archiveHtml: docs.archiveHtml, studentId, printSummary };
+      setPrintedNames((current) => ({ ...current, [studentId]: who }));
 
       // Print and next: clear the search for the next student, keep this one on screen.
       if (!job.reprint) {
-        if (query) {
+        // Only clear what was there when printing started; if the operator already typed the next
+        // name while the card printed, keep it.
+        if (queryAtStart && queryRef.current === queryAtStart) {
           keepSelectionRef.current = true;
           setQuery('');
         }
-        window.setTimeout(() => searchRef.current?.focus(), 0);
+        if (queryRef.current === queryAtStart) window.setTimeout(() => searchRef.current?.focus(), 0);
       }
 
       if (steps.upload !== 'waiting') {
@@ -948,6 +973,10 @@ export default function App() {
         setLastPrint({ ...record, uploaded: true });
         update({ upload: 'done' }, { tone: 'success', title: printSummary, detail: 'Front and back filed in the student’s portal Documents. Type the next name.' });
       } catch (uploadError) {
+        setPendingUploads((current) => [
+          ...current.filter((item) => item.studentId !== studentId),
+          { studentId, name: who, printSummary, archiveHtml: docs.archiveHtml }
+        ]);
         update({ upload: 'failed' }, {
           tone: 'warning',
           ...friendlyUploadError(bridgeErrorMessage(uploadError, '')),
@@ -983,38 +1012,51 @@ export default function App() {
       );
       return;
     }
-    void runPrintJob({ ...job, confirmed: true });
+    // Only the jam question counts as confirming a duplicate; a failed save or cancel asks again.
+    void runPrintJob(job);
   }
 
-  async function retryUpload() {
-    const job = lastJobRef.current;
-    if (!job || printingRef.current) return;
+  /** Uploads every archive copy still waiting. Successes leave the list; failures stay. */
+  async function retryUploads() {
+    const waiting = pendingUploads;
+    if (!waiting.length || printingRef.current) return;
     printingRef.current = true;
     setBusy(true);
     const steps: FlowSteps = { save: 'skipped', print: 'done', upload: 'active' };
-    setFlow({ tone: 'working', title: job.printSummary, detail: 'Trying the upload again…', steps, studentId: job.studentId });
-    try {
-      await uploadArchive(job.archiveHtml, job.studentId);
-      setLastPrint((current) => (current && current.studentId === job.studentId ? { ...current, uploaded: true } : current));
+    const label = waiting.length === 1 ? waiting[0].printSummary : `Uploading ${waiting.length} archive copies…`;
+    setFlow({ tone: 'working', title: label, detail: 'Trying the upload again…', steps, studentId: waiting[waiting.length - 1].studentId });
+    const failed: PendingUpload[] = [];
+    let lastError = '';
+    for (const item of waiting) {
+      try {
+        await uploadArchive(item.archiveHtml, item.studentId);
+        setLastPrint((current) => (current && current.studentId === item.studentId ? { ...current, uploaded: true } : current));
+      } catch (error) {
+        failed.push(item);
+        lastError = bridgeErrorMessage(error, '');
+      }
+    }
+    setPendingUploads(failed);
+    if (!failed.length) {
       setFlow({
         tone: 'success',
-        title: job.printSummary,
+        title: waiting.length === 1 ? waiting[0].printSummary : `${waiting.length} archive copies filed.`,
         detail: 'Front and back filed in the student’s portal Documents.',
         steps: { ...steps, upload: 'done' },
-        studentId: job.studentId
+        studentId: waiting[waiting.length - 1].studentId
       });
-    } catch (error) {
+    } else {
       setFlow({
         tone: 'warning',
-        ...friendlyUploadError(bridgeErrorMessage(error, '')),
+        ...friendlyUploadError(lastError),
+        title: failed.length === 1 ? `${failed[0].name}’s archive copy still didn’t upload.` : `${failed.length} archive copies still didn’t upload.`,
         retry: 'upload',
         steps: { ...steps, upload: 'failed' },
-        studentId: job.studentId
+        studentId: failed[failed.length - 1].studentId
       });
-    } finally {
-      printingRef.current = false;
-      setBusy(false);
     }
+    printingRef.current = false;
+    setBusy(false);
   }
 
   async function handleSavePdf() {
@@ -1058,6 +1100,8 @@ export default function App() {
   }
 
   function selectStudent(student: StudentRecord) {
+    // The operator chose a student themselves: a waiting Ctrl+P no longer applies.
+    setPendingAction(null);
     if (selected && student.id === selected.id) return;
     if (selected && dirty.any) {
       setPendingSwitch(student);
@@ -1116,7 +1160,7 @@ export default function App() {
     setStudents([]);
     setSelected(null);
     setLastPrint(null);
-    lastJobRef.current = null;
+    setPendingUploads([]);
     setFlow(idleFlow(liveMode));
   }
 
@@ -1194,8 +1238,23 @@ export default function App() {
     if (!pendingAction || !searchSettled || (selected && (!draftsReady || !qrDataUrl))) return;
     const action = pendingAction;
     setPendingAction(null);
-    if (action === 'print') void runPrintJob({});
-    else printButtonRef.current?.focus();
+    if (action === 'print') {
+      // Print without looking only when the search is unambiguous.
+      const exact = Boolean(selected && selected.admissionNo === query.trim());
+      if (selected && (students.length === 1 || exact)) {
+        void runPrintJob({});
+      } else {
+        printButtonRef.current?.focus();
+        if (selected) {
+          setFlow({
+            tone: 'warning',
+            title: 'Several matches. Check the student, then press Ctrl+P.',
+            detail: `Showing ${shortName(selected)}, the first of ${students.length}.`,
+            studentId: selected.id
+          });
+        }
+      }
+    } else printButtonRef.current?.focus();
     // runPrintJob reads this render's state, which now holds the settled search.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAction, pendingSwitch, searchSettled, draftsReady, qrDataUrl]);
@@ -1217,6 +1276,14 @@ export default function App() {
     setPreviewSide(backNeedsLook ? 'back' : 'front');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backNeedsLook, selected?.id]);
+
+  function printedNameFor(id: string) {
+    if (printedNames[id]) return printedNames[id];
+    const known = students.find((student) => student.id === id);
+    if (known) return shortName(known);
+    if (lastPrint?.studentId === id) return lastPrint.name;
+    return 'Student (name not loaded)';
+  }
 
   const handleFit = useCallback((report: FitReport) => {
     setFit((current) => ((Object.keys(report) as Array<keyof FitReport>).some((key) => report[key] !== current[key]) ? report : current));
@@ -1286,7 +1353,7 @@ export default function App() {
           }
         : { tone: 'warning', title: 'Unsaved changes.', detail: 'Print ID saves them first.' };
   } else if (pendingAction === 'print') {
-    stripFlow = { tone: 'working', title: `Finding “${query.trim()}”…`, detail: 'Prints the first match as soon as the search finishes.' };
+    stripFlow = { tone: 'working', title: `Finding “${query.trim()}”…`, detail: 'Prints as soon as the search finds one clear match.' };
   } else if (selected && blockers.length) {
     stripMode = 'blocked';
     stripFlow = {
@@ -1353,7 +1420,17 @@ export default function App() {
           <button
             type="button"
             className="button secondary"
-            onClick={() => void runPrintJob({ reprint: lastPrint })}
+            onClick={() =>
+              askBeforeDuplicate(
+                { reprint: lastPrint },
+                `Reprint ${lastPrint.name}’s ID?`,
+                <p>
+                  This prints the same card again, exactly as printed at {timeOf(lastPrint.at)}. Reprint only if that card was lost or
+                  spoiled.
+                </p>,
+                'confirm-reprint'
+              )
+            }
             disabled={busy}
             title={`Print ${lastPrint.name}’s card again, exactly as printed at ${timeOf(lastPrint.at)}`}
           >
@@ -1578,7 +1655,7 @@ export default function App() {
                         .slice(0, 5)
                         .map(([id, at]) => (
                           <li key={id}>
-                            <span>{printedToday.names[id] || id}</span>
+                            <span>{printedNameFor(id)}</span>
                             <time>{timeOf(at)}</time>
                           </li>
                         ))}
@@ -1697,12 +1774,31 @@ export default function App() {
               </button>
             </div>
 
+            {pendingUploads.length && flow.retry !== 'upload' ? (
+              <div className="upload-notice" role="status" data-testid="upload-notice">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <span>
+                  <strong>
+                    {pendingUploads.length === 1
+                      ? `${pendingUploads[0].name}’s archive copy isn’t in the portal yet.`
+                      : `${pendingUploads.length} archive copies aren’t in the portal yet.`}
+                  </strong>{' '}
+                  The cards printed fine.
+                </span>
+                <button type="button" className="button secondary small" onClick={() => void retryUploads()} disabled={busy}>
+                  <RotateCcw size={16} aria-hidden="true" /> Try again
+                </button>
+                <button type="button" className="button ghost small" onClick={() => setPendingUploads([])} disabled={busy}>
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
             <StatusStrip
               compactSteps={stripFlow.tone !== 'working'}
               flow={stripFlow}
               retryDisabled={busy}
               retryPrimary={printErrorShowing}
-              onRetry={flow.retry === 'upload' ? () => void retryUpload() : flow.retry === 'print' ? retryPrint : undefined}
+              onRetry={flow.retry === 'upload' ? () => void retryUploads() : flow.retry === 'print' ? retryPrint : undefined}
               actions={
                 stripMode === 'dirty' ? (
                   <>

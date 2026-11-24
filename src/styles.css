@@ -2305,6 +2305,23 @@ body,
   min-height: 44px;
 }
 
+.upload-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--amber-200);
+  background: var(--amber-50);
+  color: var(--amber-800);
+  font-size: 14px;
+}
+
+.upload-notice > span {
+  flex: 1 1 220px;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1600px) {
